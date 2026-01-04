@@ -3,9 +3,13 @@
 
 #include <cstdint>
 #include "AXIMemory.h"
+#include "Simulator.h"
+#include "Config.h"
+
+#ifndef USE_SIMULATOR_ONLY
 #include "verilated_vcd_c.h"
 #include "VCPU.h"
-#include "Simulator.h"
+#endif
 
 class Statistic {
     private:
@@ -28,6 +32,9 @@ class Statistic {
     inline uint32_t getCycles() {
         return cycles;
     }
+    inline uint32_t getInsts() {
+        return insts;
+    }
 
     inline double getIPC() {
         return insts * 1.0 / cycles;
@@ -40,7 +47,9 @@ class Statistic {
     }
 
     void printLastInstrucions(AXIMemory* mem);
+#ifndef USE_SIMULATOR_ONLY
     void printMarkdownReport(VCPU* cpu, std::string imgName, Simulator* sim);
+#endif
 
     
 };

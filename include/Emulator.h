@@ -1,12 +1,18 @@
 #ifndef EMULATOR_HH
 #define EMULATOR_HH
 
+#include "Config.h"
+
+#ifndef USE_SIMULATOR_ONLY
+
 #include <cstdint>
 #include "AXIMemory.h"
 #include "Statistic.h"
 #include "Simulator.h"
+#include "verilated_vcd_c.h"
+#include "VCPU.h"
 
-#define NCOMMIT 2
+#define NPIPELINE 8
 
 class Emulator {
     private:
@@ -18,9 +24,8 @@ class Emulator {
 
     uint32_t baseAddr = 0x80000000;
     uint32_t deadInstruction = 0x80000000;
-    uint32_t stallThreshold = 1000;
+    uint32_t stallThreshold = 10000;  // VLIW需要更长的阈值
 
-    uint8_t rnmTable[32] = {0};
     uint32_t stallCount = 0;
     
     VerilatedVcdC *m_trace = nullptr;
@@ -28,9 +33,6 @@ class Emulator {
 
     inline uint32_t bits(uint32_t value, uint32_t hi, uint32_t lo) {
         return (value >> lo) & ~((-1) << (hi - lo + 1));
-    }
-    inline void rnmTableUpdate(uint8_t rd, uint8_t prd) {
-        rnmTable[rd] = prd;
     }
 
     // difftest
@@ -59,4 +61,6 @@ class Emulator {
 
 };
 
-#endif
+#endif // USE_SIMULATOR_ONLY
+
+#endif // EMULATOR_HH
