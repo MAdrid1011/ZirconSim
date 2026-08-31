@@ -169,6 +169,15 @@ void emitTrace(std::ostream& stream, const RetireEvent& event, uint64_t& expecte
          << ",\"fflags\":" << static_cast<unsigned>(event.fflags) << "}\n";
 }
 
+std::optional<int> observeRetiredTohost(zircon::sim::TestExitMonitor& monitor,
+                                        const RetireEvent& event) {
+  if (!event.valid || event.trap || event.interrupt || event.memory_write_mask == 0) {
+    return std::nullopt;
+  }
+  return monitor.observeWrite(event.memory_address, event.memory_write_data,
+                              event.memory_write_mask);
+}
+
 RetireEvent lane0(const VZirconCore& dut) {
   return {
       .valid = static_cast<bool>(dut.io_trace_0_valid), .order = dut.io_trace_0_order,
@@ -226,7 +235,8 @@ int main(int argc, char** argv) {
     std::ofstream trace_stream(options.retire_trace);
     if (!trace_stream) throw std::runtime_error("cannot create retire trace: " + options.retire_trace);
 
-    zircon::sim::DeterministicAxiMemory memory(image.memory(), options.seed, tohost);
+    zircon::sim::DeterministicAxiMemory memory(image.memory(), options.seed);
+    zircon::sim::TestExitMonitor retired_exit(*tohost);
     Verilated::commandArgs(argc, argv);
     VZirconCore dut;
     VerilatedVcdC wave;
@@ -257,8 +267,15 @@ int main(int argc, char** argv) {
       driveSlave(dut, slave);
       dut.eval();
       if (options.wave) wave.dump(simulation_time++);
-      emitTrace(trace_stream, lane0(dut), expected_order);
-      emitTrace(trace_stream, lane1(dut), expected_order);
+      const RetireEvent first_retired = lane0(dut);
+      const RetireEvent second_retired = lane1(dut);
+      emitTrace(trace_stream, first_retired, expected_order);
+      emitTrace(trace_stream, second_retired, expected_order);
+      std::optional<int> retired_exit_status = observeRetiredTohost(retired_exit,
+        first_retired);
+      if (!retired_exit_status.has_value()) {
+        retired_exit_status = observeRetiredTohost(retired_exit, second_retired);
+      }
       if (options.stop_after_retired != 0 && expected_order >= options.stop_after_retired) {
         dut.final();
         if (options.wave) wave.close();
@@ -273,10 +290,10 @@ int main(int argc, char** argv) {
       dut.eval();
       if (options.wave) wave.dump(simulation_time++);
       memory.advance(master, slave);
-      if (memory.exitStatus().has_value()) {
+      if (retired_exit_status.has_value()) {
         dut.final();
         if (options.wave) wave.close();
-        const int status = *memory.exitStatus();
+        const int status = *retired_exit_status;
         std::cout << "{\"status\":\"tohost\",\"cycles\":" << cycle + 1
                   << ",\"seed\":" << options.seed << ",\"entry\":" << image.entry()
                   << ",\"tohost\":" << *tohost << ",\"exit\":" << status

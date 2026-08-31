@@ -46,7 +46,7 @@ int main(int argc, char** argv) {
 
   zircon::sim::SparseMemory memory;
   memory.write32(0x80000000u, 0x00500093u);
-  zircon::sim::DeterministicAxiMemory axi(memory, 7, std::nullopt);
+  zircon::sim::DeterministicAxiMemory axi(memory, 7);
   zircon::sim::AxiMasterSignals ar;
   ar.ar_valid = true;
   ar.ar_id = 2;

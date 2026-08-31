@@ -2,7 +2,6 @@
 #define ZIRCON_SIM_DETERMINISTIC_AXI_MEMORY_H
 
 #include <cstdint>
-#include <optional>
 
 #include "DeterministicRng.h"
 #include "ElfImage.h"
@@ -52,14 +51,12 @@ struct AxiSlaveSignals {
  */
 class DeterministicAxiMemory {
  public:
-  DeterministicAxiMemory(SparseMemory memory, uint64_t seed,
-                         std::optional<uint32_t> tohost_address);
+  DeterministicAxiMemory(SparseMemory memory, uint64_t seed);
 
   AxiSlaveSignals drive();
   void advance(const AxiMasterSignals& master, const AxiSlaveSignals& slave);
 
   const SparseMemory& memory() const { return memory_; }
-  std::optional<int> exitStatus() const { return exit_status_; }
 
  private:
   enum class ReadState { Idle, Respond };
@@ -67,8 +64,6 @@ class DeterministicAxiMemory {
 
   SparseMemory memory_;
   DeterministicRng rng_;
-  std::optional<TestExitMonitor> exit_monitor_;
-  std::optional<int> exit_status_;
 
   ReadState read_state_ = ReadState::Idle;
   uint8_t read_id_ = 0;

@@ -36,7 +36,7 @@ VERILATOR_CXXFLAGS := -std=c++20 -O2 -Wall -Wextra \
 	-Wno-unused-but-set-variable \
 	-I$(WORK_DIR)/include
 
-.PHONY: all unit software verilog rtl smoke diff diff-prefix diff-alu-branch diff-rv32m diff-sail-rv32m micro-ipc-rv32m check-baseline-2024 baseline-ipc-rv32m clean
+.PHONY: all unit software verilog rtl smoke tohost-rv32m diff diff-prefix diff-alu-branch diff-rv32m diff-sail-rv32m micro-ipc-rv32m check-baseline-2024 baseline-ipc-rv32m clean
 
 all: unit
 
@@ -88,25 +88,28 @@ rtl: verilog
 smoke: rtl software
 	$(RTL_BINARY) --elf $(TEST_ELF) --retire-trace $(BUILD_DIR)/smoke-retire.jsonl --seed 1 --max-cycles 10 --allow-timeout
 
+tohost-rv32m: rtl $(DIFF_RV32M_ELF)
+	$(RTL_BINARY) --elf $(DIFF_RV32M_ELF) --retire-trace $(BUILD_DIR)/rv32m-tohost.jsonl --seed 1 --max-cycles 2048
+
 diff: diff-prefix diff-alu-branch diff-rv32m
 
 diff-prefix: rtl $(DIFF_BINARY) $(DIFF_PREFIX_ELF)
-	$(RTL_BINARY) --elf $(DIFF_PREFIX_ELF) --retire-trace $(DIFF_PREFIX_TRACE) --seed 1 --max-cycles 1024 --expect-retired 17 --allow-timeout
+	$(RTL_BINARY) --elf $(DIFF_PREFIX_ELF) --retire-trace $(DIFF_PREFIX_TRACE) --seed 1 --max-cycles 1024 --expect-retired 17
 	$(SPIKE) --isa=RV32I_Zicsr_Zifencei --priv=m --pc=0x80000000 --instructions=17 --log-commits --log=$(DIFF_PREFIX_SPIKE_LOG) $(DIFF_PREFIX_ELF)
 	$(DIFF_BINARY) --zircon-trace $(DIFF_PREFIX_TRACE) --spike-log $(DIFF_PREFIX_SPIKE_LOG) --max-events 17
 
 diff-alu-branch: rtl $(DIFF_BINARY) $(DIFF_ALU_BRANCH_ELF)
-	$(RTL_BINARY) --elf $(DIFF_ALU_BRANCH_ELF) --retire-trace $(DIFF_ALU_BRANCH_TRACE) --seed 1 --max-cycles 1024 --expect-retired 32 --allow-timeout
+	$(RTL_BINARY) --elf $(DIFF_ALU_BRANCH_ELF) --retire-trace $(DIFF_ALU_BRANCH_TRACE) --seed 1 --max-cycles 1024 --expect-retired 32
 	$(SPIKE) --isa=RV32I_Zicsr_Zifencei --priv=m --pc=0x80000000 --instructions=32 --log-commits --log=$(DIFF_ALU_BRANCH_SPIKE_LOG) $(DIFF_ALU_BRANCH_ELF)
 	$(DIFF_BINARY) --zircon-trace $(DIFF_ALU_BRANCH_TRACE) --spike-log $(DIFF_ALU_BRANCH_SPIKE_LOG) --max-events 32
 
-diff-rv32m: rtl $(DIFF_BINARY) $(DIFF_RV32M_ELF)
-	$(RTL_BINARY) --elf $(DIFF_RV32M_ELF) --retire-trace $(DIFF_RV32M_TRACE) --seed 1 --max-cycles 2048 --expect-retired 17 --allow-timeout
+diff-rv32m: tohost-rv32m $(DIFF_BINARY)
+	cp $(BUILD_DIR)/rv32m-tohost.jsonl $(DIFF_RV32M_TRACE)
 	$(SPIKE) --isa=RV32IM_Zicsr_Zifencei --priv=m --pc=0x80000000 --instructions=17 --log-commits --log=$(DIFF_RV32M_SPIKE_LOG) $(DIFF_RV32M_ELF)
 	$(DIFF_BINARY) --zircon-trace $(DIFF_RV32M_TRACE) --spike-log $(DIFF_RV32M_SPIKE_LOG) --max-events 17
 
-diff-sail-rv32m: rtl $(DIFF_BINARY) $(DIFF_RV32M_ELF)
-	$(RTL_BINARY) --elf $(DIFF_RV32M_ELF) --retire-trace $(DIFF_RV32M_TRACE) --seed 1 --max-cycles 2048 --expect-retired 17 --allow-timeout
+diff-sail-rv32m: tohost-rv32m $(DIFF_BINARY)
+	cp $(BUILD_DIR)/rv32m-tohost.jsonl $(DIFF_RV32M_TRACE)
 	$(SAIL) --rv32 --inst-limit 17 --trace-output $(DIFF_RV32M_SAIL_LOG) --trace-instr --trace-gpr --trace-csr $(DIFF_RV32M_ELF)
 	$(DIFF_BINARY) --zircon-trace $(DIFF_RV32M_TRACE) --sail-log $(DIFF_RV32M_SAIL_LOG) --max-events 17
 

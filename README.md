@@ -21,9 +21,9 @@ smoke result, never an ELF pass result.
 The runner requires explicit `--elf`, `--retire-trace`, and non-zero `--seed`.
 Its AXI model loads ELF `PT_LOAD` data, drives legal deterministic backpressure,
 holds each R/B response until handshake, tracks IDs/beats/last, and observes
-`tohost` writes. It returns success only for `tohost = 1`; M1 has no LSU yet,
-so a real tohost store is expected to remain blocked until M3 rather than being
-misreported as a pass.
+`tohost` writes. It returns success only after a normal `RetireEvent` records
+the matching store and `tohost = 1`; an accepted AXI W beat alone is not an ELF
+pass. `make tohost-rv32m` runs the explicit seed-1 M3 store completion smoke.
 
 The old handwritten partial RV32IM interpreter remains in branch history and
 is not a reference model. Commit-level comparison uses Spike, with the locked
@@ -32,7 +32,8 @@ Sail RISC-V model providing an independently parsed RV32M prefix check.
 `make diff SPIKE=/path/to/spike` runs two M1 RV32I/Zicsr and one M2 RV32IM
 commit-prefix smoke. It compares 17 dataflow/CSR/control retirements, 32
 ALU/branch retirements, and 17 RV32M retirements against bounded Spike commit
-logs, then accepts only the expected timeout at each following `tohost` store.
+logs. Each run must subsequently retire its `tohost` store before the harness
+reports ELF completion.
 See [`docs/spike-differential.md`](docs/spike-differential.md) for the exact
 comparison fields and current scope.
 

@@ -12,13 +12,8 @@ constexpr uint8_t kAxiBurstIncrementing = 1;
 
 }  // namespace
 
-DeterministicAxiMemory::DeterministicAxiMemory(
-    SparseMemory memory, uint64_t seed, std::optional<uint32_t> tohost_address)
-    : memory_(std::move(memory)), rng_(seed) {
-  if (tohost_address.has_value()) {
-    exit_monitor_.emplace(*tohost_address);
-  }
-}
+DeterministicAxiMemory::DeterministicAxiMemory(SparseMemory memory, uint64_t seed)
+    : memory_(std::move(memory)), rng_(seed) {}
 
 bool DeterministicAxiMemory::acceptThisCycle() {
   // The probability is fixed and the sequence is fully determined by --seed.
@@ -125,10 +120,6 @@ void DeterministicAxiMemory::advance(const AxiMasterSignals& master,
         }
         if (write_response_ == kAxiOkay) {
           memory_.write32(write_address_, master.w_data, master.w_strb);
-          if (exit_monitor_.has_value() && !exit_status_.has_value()) {
-            exit_status_ = exit_monitor_->observeWrite(write_address_, master.w_data,
-                                                        master.w_strb);
-          }
         }
         if (write_remaining_ == 0) {
           throw std::logic_error("AXI write underflow");

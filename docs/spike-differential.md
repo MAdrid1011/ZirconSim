@@ -1,4 +1,4 @@
-# M1/M2 Commit-Prefix Differential
+# M1/M2 Commit-Prefix Differential With M3 `tohost` Gate
 
 `CommitTraceDiff` compares the temporary executable M1/M2 core with the exact
 Spike revision in the parent `toolchain.lock.json`. `make diff` runs two
@@ -13,13 +13,15 @@ freestanding `RV32I_Zicsr_Zifencei` ELFs at `0x80000000`:
   RV32M operations, signed/unsigned product halves, normal signed div/rem,
   divide-by-zero, and `INT_MIN / -1` and remainder overflow rules.
 
-Each next instruction is a `tohost` store and must block through M2, because no
-LSU exists yet.
+Each prefix ends in a `tohost` store. The prefix comparator deliberately stops
+before that memory event, while the runner must subsequently retire the store
+before it may report ELF completion. An accepted AXI W beat or an unretired
+store must not pass the gate.
 
 Each RTL runner receives explicit nonzero AXI seed 1, a prefix-specific
-`--expect-retired` count, and a fixed cycle limit. It may return only the
-explicit allowed timeout after the required prefix has retired. Spike uses the
-same prefix-specific `--instructions` count, so each log is bounded by
+`--expect-retired` count, and a fixed cycle limit. The runner returns only when
+the exact `tohost` store is in the ordered retire trace. Spike uses the same
+prefix-specific `--instructions` count, so each reference log is bounded by
 architectural retirement rather than host elapsed time.
 
 For every event, the comparator requires matching M-mode privilege, PC,
@@ -65,11 +67,12 @@ make diff-sail-rv32m \
   SAIL=/work/sail-riscv/build/c_emulator/sail_riscv_sim
 ```
 
-This target runs exactly the existing seed-1 RV32M ELF for 17 retirements and
-keeps the JSONL retire trace and Sail log in `build/`. It parses instruction,
-GPR, and CSR trace lines. Sail can log internal CSR maintenance (for example a
-`mip` write) after an ordinary instruction; the comparator associates CSR
-writes only with an architectural CSR instruction, so such model-internal log
-lines cannot create a false mismatch. This is bounded M2 cross-check evidence,
-not full Sail coverage, trap/interrupt validation, or a replacement for the
-required M3--M6 differential suites.
+This target runs the existing seed-1 RV32M ELF through its retired `tohost`
+store and keeps the JSONL retire trace and Sail log in `build/`. It compares the
+first 17 normal retirements, parsing instruction, GPR, and CSR trace lines.
+Sail can log internal CSR maintenance (for example a `mip` write) after an
+ordinary instruction; the comparator associates CSR writes only with an
+architectural CSR instruction, so such model-internal log lines cannot create a
+false mismatch. This is bounded M2 cross-check plus M3 store-retirement
+evidence, not full Sail coverage, trap/interrupt validation, or a replacement
+for the required M3--M6 differential suites.
