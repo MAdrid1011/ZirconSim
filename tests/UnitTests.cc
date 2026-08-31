@@ -3,6 +3,7 @@
 #include <stdexcept>
 
 #include "DeterministicRng.h"
+#include "DeterministicAxiMemory.h"
 #include "ElfImage.h"
 
 int main(int argc, char** argv) {
@@ -41,6 +42,44 @@ int main(int argc, char** argv) {
   zircon::sim::TestExitMonitor failure_monitor(*tohost);
   assert(failure_monitor.observeWrite(*tohost, 7, 0xf).value() == 3);
 
-  std::cout << "unit-tests: deterministic RNG, ELF32, symbols, and tohost passed" << std::endl;
+  zircon::sim::SparseMemory memory;
+  memory.write32(0x80000000u, 0x00500093u);
+  zircon::sim::DeterministicAxiMemory axi(memory, 7, std::nullopt);
+  zircon::sim::AxiMasterSignals ar;
+  ar.ar_valid = true;
+  ar.ar_id = 2;
+  ar.ar_addr = 0x80000000u;
+  ar.ar_len = 0;
+  ar.ar_size = 2;
+  ar.ar_burst = 1;
+  zircon::sim::AxiSlaveSignals slave;
+  for (int cycle = 0; cycle < 32; ++cycle) {
+    slave = axi.drive();
+    axi.advance(ar, slave);
+    if (slave.ar_ready) {
+      ar.ar_valid = false;
+      break;
+    }
+  }
+  assert(!ar.ar_valid);
+
+  bool observed_read = false;
+  for (int cycle = 0; cycle < 32; ++cycle) {
+    slave = axi.drive();
+    zircon::sim::AxiMasterSignals r;
+    r.r_ready = true;
+    axi.advance(r, slave);
+    if (slave.r_valid) {
+      assert(slave.r_id == 2);
+      assert(slave.r_data == 0x00500093u);
+      assert(slave.r_resp == 0);
+      assert(slave.r_last);
+      observed_read = true;
+      break;
+    }
+  }
+  assert(observed_read);
+
+  std::cout << "unit-tests: deterministic RNG, ELF32, AXI, symbols, and tohost passed" << std::endl;
   return 0;
 }
