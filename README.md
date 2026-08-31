@@ -43,3 +43,10 @@ seed-1, 17-retirement RV32M prefix against Sail-RISC-V commit
 integer retirement only, not an ELF pass, full Sail suite, or M3 memory
 differential. The reproducible model build and comparison command are recorded
 in [`docs/spike-differential.md`](docs/spike-differential.md).
+
+`make micro-ipc-rv32m` measures the M2 RV32M prefix through its 17th observed
+retirement. `make baseline-ipc-rv32m BASELINE_2024=/path/to/clean/Zircon-2024`
+runs the same prefix and deterministic AXI slave through the immutable 2024
+Verilator model. These are early fixed-prefix IPC measurements only; their
+scope and required baseline checkout are defined in
+[`docs/ipc-microbenchmark.md`](docs/ipc-microbenchmark.md).

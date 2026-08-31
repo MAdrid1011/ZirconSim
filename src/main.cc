@@ -21,6 +21,7 @@ struct Options {
   uint64_t seed = 1;
   uint64_t max_cycles = 1000000;
   uint64_t expect_retired = 0;
+  uint64_t stop_after_retired = 0;
   bool allow_timeout = false;
   bool wave = false;
 };
@@ -67,7 +68,7 @@ Options parseOptions(int argc, char** argv) {
     const std::string argument = argv[index];
     if ((argument == "--elf" || argument == "--retire-trace" ||
          argument == "--seed" || argument == "--max-cycles" ||
-         argument == "--expect-retired") &&
+         argument == "--expect-retired" || argument == "--stop-after-retired") &&
         index + 1 >= argc) {
       throw std::invalid_argument("missing value for " + argument);
     }
@@ -81,6 +82,8 @@ Options parseOptions(int argc, char** argv) {
       options.max_cycles = parseUnsigned(argv[++index], "--max-cycles");
     } else if (argument == "--expect-retired") {
       options.expect_retired = parseUnsigned(argv[++index], "--expect-retired");
+    } else if (argument == "--stop-after-retired") {
+      options.stop_after_retired = parseUnsigned(argv[++index], "--stop-after-retired");
     } else if (argument == "--allow-timeout") {
       options.allow_timeout = true;
     } else if (argument == "--wave") {
@@ -256,6 +259,14 @@ int main(int argc, char** argv) {
       if (options.wave) wave.dump(simulation_time++);
       emitTrace(trace_stream, lane0(dut), expected_order);
       emitTrace(trace_stream, lane1(dut), expected_order);
+      if (options.stop_after_retired != 0 && expected_order >= options.stop_after_retired) {
+        dut.final();
+        if (options.wave) wave.close();
+        std::cout << "{\"status\":\"retire-limit\",\"cycles\":" << cycle + 1
+                  << ",\"seed\":" << options.seed << ",\"entry\":" << image.entry()
+                  << ",\"retired\":" << expected_order << "}" << std::endl;
+        return 0;
+      }
       const auto master = captureMaster(dut);
 
       dut.clock = 1;
