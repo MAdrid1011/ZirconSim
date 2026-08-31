@@ -10,7 +10,8 @@ TEST_ELF := $(PARENT_DIR)/RV-Software/picotest/build/pico-rv32imaf_zicsr_zifence
 CXX ?= c++
 CXXFLAGS := -std=c++20 -O2 -Wall -Wextra -Werror -I$(WORK_DIR)/include
 VERILATOR_CXXFLAGS := -std=c++20 -O2 -Wall -Wextra \
-	-Wno-unused-parameter -Wno-unused-variable -Wno-unused-but-set-variable \
+	-Wno-sign-compare -Wno-unused-parameter -Wno-unused-variable \
+	-Wno-unused-but-set-variable \
 	-I$(WORK_DIR)/include
 
 .PHONY: all unit software verilog rtl smoke clean
@@ -32,7 +33,7 @@ verilog:
 
 rtl: verilog
 	@mkdir -p $(BUILD_DIR)/rtl
-	verilator --cc --exe --build --trace -Wall -Wno-fatal \
+	verilator --cc --exe --build --trace -Wall -Wno-fatal -Wno-UNUSEDSIGNAL \
 		--top-module ZirconCore --Mdir $(BUILD_DIR)/rtl \
 		-CFLAGS "$(VERILATOR_CXXFLAGS)" \
 		$(VERILOG_TOP) src/main.cc src/ElfImage.cc
