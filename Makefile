@@ -3,7 +3,7 @@ PARENT_DIR := $(abspath ..)
 BUILD_DIR := $(WORK_DIR)/build
 VERILOG_DIR := $(PARENT_DIR)/generated-trace
 VERILOG_TOP := $(VERILOG_DIR)/ZirconCore.sv
-VERILOG_SOURCES := $(wildcard $(VERILOG_DIR)/*.sv)
+VERILOG_SOURCES = $(wildcard $(VERILOG_DIR)/*.sv)
 RTL_BINARY := $(BUILD_DIR)/rtl/VZirconCore
 UNIT_BINARY := $(BUILD_DIR)/unit-tests
 DIFF_BINARY := $(BUILD_DIR)/commit-trace-diff
@@ -14,6 +14,9 @@ DIFF_PREFIX_SPIKE_LOG := $(BUILD_DIR)/rv32i-commit-prefix.spike.log
 DIFF_ALU_BRANCH_ELF := $(BUILD_DIR)/rv32i-alu-branch-prefix.elf
 DIFF_ALU_BRANCH_TRACE := $(BUILD_DIR)/rv32i-alu-branch-prefix.jsonl
 DIFF_ALU_BRANCH_SPIKE_LOG := $(BUILD_DIR)/rv32i-alu-branch-prefix.spike.log
+DIFF_RV32M_ELF := $(BUILD_DIR)/rv32m-commit-prefix.elf
+DIFF_RV32M_TRACE := $(BUILD_DIR)/rv32m-commit-prefix.jsonl
+DIFF_RV32M_SPIKE_LOG := $(BUILD_DIR)/rv32m-commit-prefix.spike.log
 SPIKE ?= spike
 
 CXX ?= c++
@@ -23,7 +26,7 @@ VERILATOR_CXXFLAGS := -std=c++20 -O2 -Wall -Wextra \
 	-Wno-unused-but-set-variable \
 	-I$(WORK_DIR)/include
 
-.PHONY: all unit software verilog rtl smoke diff diff-prefix diff-alu-branch clean
+.PHONY: all unit software verilog rtl smoke diff diff-prefix diff-alu-branch diff-rv32m clean
 
 all: unit
 
@@ -44,6 +47,12 @@ $(BUILD_DIR)/%.elf: tests/%.S tests/rv32i-commit-prefix.ld
 		-Wl,-T,$(WORK_DIR)/tests/rv32i-commit-prefix.ld -Wl,--build-id=none \
 		-Wl,-e,_start -o $@ $<
 
+$(DIFF_RV32M_ELF): tests/rv32m-commit-prefix.S tests/rv32i-commit-prefix.ld
+	@mkdir -p $(BUILD_DIR)
+	clang --target=riscv32 -march=rv32im_zicsr_zifencei -mabi=ilp32 -nostdlib -fuse-ld=lld \
+		-Wl,-T,$(WORK_DIR)/tests/rv32i-commit-prefix.ld -Wl,--build-id=none \
+		-Wl,-e,_start -o $@ $<
+
 software:
 	$(MAKE) -C $(PARENT_DIR)/RV-Software/picotest image
 
@@ -60,7 +69,7 @@ rtl: verilog
 smoke: rtl software
 	$(RTL_BINARY) --elf $(TEST_ELF) --retire-trace $(BUILD_DIR)/smoke-retire.jsonl --seed 1 --max-cycles 10 --allow-timeout
 
-diff: diff-prefix diff-alu-branch
+diff: diff-prefix diff-alu-branch diff-rv32m
 
 diff-prefix: rtl $(DIFF_BINARY) $(DIFF_PREFIX_ELF)
 	$(RTL_BINARY) --elf $(DIFF_PREFIX_ELF) --retire-trace $(DIFF_PREFIX_TRACE) --seed 1 --max-cycles 1024 --expect-retired 17 --allow-timeout
@@ -71,6 +80,11 @@ diff-alu-branch: rtl $(DIFF_BINARY) $(DIFF_ALU_BRANCH_ELF)
 	$(RTL_BINARY) --elf $(DIFF_ALU_BRANCH_ELF) --retire-trace $(DIFF_ALU_BRANCH_TRACE) --seed 1 --max-cycles 1024 --expect-retired 32 --allow-timeout
 	$(SPIKE) --isa=RV32I_Zicsr_Zifencei --priv=m --pc=0x80000000 --instructions=32 --log-commits --log=$(DIFF_ALU_BRANCH_SPIKE_LOG) $(DIFF_ALU_BRANCH_ELF)
 	$(DIFF_BINARY) --zircon-trace $(DIFF_ALU_BRANCH_TRACE) --spike-log $(DIFF_ALU_BRANCH_SPIKE_LOG) --max-events 32
+
+diff-rv32m: rtl $(DIFF_BINARY) $(DIFF_RV32M_ELF)
+	$(RTL_BINARY) --elf $(DIFF_RV32M_ELF) --retire-trace $(DIFF_RV32M_TRACE) --seed 1 --max-cycles 2048 --expect-retired 17 --allow-timeout
+	$(SPIKE) --isa=RV32IM_Zicsr_Zifencei --priv=m --pc=0x80000000 --instructions=17 --log-commits --log=$(DIFF_RV32M_SPIKE_LOG) $(DIFF_RV32M_ELF)
+	$(DIFF_BINARY) --zircon-trace $(DIFF_RV32M_TRACE) --spike-log $(DIFF_RV32M_SPIKE_LOG) --max-events 17
 
 clean:
 	rm -rf $(BUILD_DIR)

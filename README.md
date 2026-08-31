@@ -29,8 +29,9 @@ The old handwritten partial RV32IM interpreter remains in branch history and
 is not a reference model. Commit-level comparison will use Spike, with Sail as
 the nightly and dispute oracle.
 
-`make diff SPIKE=/path/to/spike` runs two M1 RV32I/Zicsr commit-prefix smokes.
-It compares 17 dataflow/CSR/control retirements and 32 ALU/branch retirements
-against bounded Spike commit logs, then accepts only the expected M1 timeout at
-each following `tohost` store. See [`docs/spike-differential.md`](docs/spike-differential.md)
-for the exact comparison fields and current scope.
+`make diff SPIKE=/path/to/spike` runs two M1 RV32I/Zicsr and one M2 RV32IM
+commit-prefix smoke. It compares 17 dataflow/CSR/control retirements, 32
+ALU/branch retirements, and 17 RV32M retirements against bounded Spike commit
+logs, then accepts only the expected timeout at each following `tohost` store.
+See [`docs/spike-differential.md`](docs/spike-differential.md) for the exact
+comparison fields and current scope.

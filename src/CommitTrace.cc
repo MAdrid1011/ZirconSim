@@ -52,7 +52,7 @@ CommitRecord zirconRecord(const std::string& line) {
       boolean(field(line, "fprWrite"), "fprWrite") ||
       decimal(field(line, "memoryReadMask"), "memoryReadMask") != 0 ||
       decimal(field(line, "memoryWriteMask"), "memoryWriteMask") != 0) {
-    throw std::runtime_error("M1 Spike prefix comparison only accepts normal integer retirements");
+    throw std::runtime_error("Spike prefix comparison only accepts normal integer retirements");
   }
 
   CommitRecord record;
