@@ -52,7 +52,7 @@ CommitRecord zirconRecord(const std::string& line) {
       boolean(field(line, "fprWrite"), "fprWrite") ||
       decimal(field(line, "memoryReadMask"), "memoryReadMask") != 0 ||
       decimal(field(line, "memoryWriteMask"), "memoryWriteMask") != 0) {
-    throw std::runtime_error("Spike prefix comparison only accepts normal integer retirements");
+    throw std::runtime_error("commit-prefix comparison only accepts normal integer retirements");
   }
 
   CommitRecord record;
@@ -67,6 +67,18 @@ CommitRecord zirconRecord(const std::string& line) {
   record.csr_address = static_cast<uint16_t>(decimal(field(line, "csrAddress"), "csrAddress"));
   record.csr_data = static_cast<uint32_t>(decimal(field(line, "csrData"), "csrData"));
   return record;
+}
+
+uint8_t sailPrivilege(const std::string& value) {
+  if (value == "M") return 3;
+  if (value == "S") return 1;
+  if (value == "U") return 0;
+  throw std::runtime_error("unknown Sail privilege");
+}
+
+bool isCsrInstruction(uint32_t instruction) {
+  return (instruction & 0x7fu) == 0x73u &&
+    ((instruction >> 12u) & 0x7u) != 0;
 }
 
 }  // namespace
@@ -118,14 +130,67 @@ std::vector<CommitRecord> parseSpikeCommitLog(std::istream& input, size_t max_re
   return records;
 }
 
+std::vector<CommitRecord> parseSailCommitLog(std::istream& input, size_t max_records) {
+  const std::regex instruction(
+      R"(^\[([0-9]+)\] \[([MSU])\]: 0x([0-9a-fA-F]+) \(0x([0-9a-fA-F]+)\).*$)");
+  const std::regex gpr(R"(^x([0-9]+) <- 0x([0-9a-fA-F]+)$)");
+  const std::regex csr(R"(^CSR .+ \(0x([0-9a-fA-F]+)\) <- 0x([0-9a-fA-F]+)$)");
+
+  std::vector<CommitRecord> records;
+  CommitRecord current;
+  bool have_current = false;
+  std::string line;
+  std::smatch match;
+
+  const auto appendCurrent = [&] {
+    if (have_current) {
+      records.push_back(current);
+      have_current = false;
+    }
+  };
+
+  while (records.size() < max_records && std::getline(input, line)) {
+    if (std::regex_match(line, match, instruction)) {
+      appendCurrent();
+      if (records.size() == max_records) break;
+      if (decimal(match[1].str(), "Sail order") != records.size()) {
+        throw std::runtime_error("Sail trace order is not a contiguous prefix");
+      }
+      current = CommitRecord{};
+      current.order = records.size();
+      current.privilege = sailPrivilege(match[2].str());
+      current.pc = static_cast<uint32_t>(hexadecimal(match[3].str(), "Sail PC"));
+      current.instruction = static_cast<uint32_t>(hexadecimal(match[4].str(), "Sail instruction"));
+      have_current = true;
+    } else if (have_current && std::regex_match(line, match, gpr)) {
+      if (current.gpr_write) {
+        throw std::runtime_error("Sail instruction has multiple GPR writes");
+      }
+      current.gpr_write = true;
+      current.gpr_address = static_cast<uint8_t>(decimal(match[1].str(), "Sail GPR address"));
+      current.gpr_data = static_cast<uint32_t>(hexadecimal(match[2].str(), "Sail GPR data"));
+    } else if (have_current && isCsrInstruction(current.instruction) &&
+      std::regex_match(line, match, csr)) {
+      if (current.csr_write) {
+        throw std::runtime_error("Sail instruction has multiple CSR writes");
+      }
+      current.csr_write = true;
+      current.csr_address = static_cast<uint16_t>(hexadecimal(match[1].str(), "Sail CSR address"));
+      current.csr_data = static_cast<uint32_t>(hexadecimal(match[2].str(), "Sail CSR data"));
+    }
+  }
+  if (records.size() < max_records) appendCurrent();
+  return records;
+}
+
 void compareCommitPrefixes(const std::vector<CommitRecord>& zircon,
-                           const std::vector<CommitRecord>& spike) {
-  if (zircon.size() != spike.size()) {
-    throw std::runtime_error("Zircon and Spike commit-prefix lengths differ");
+                           const std::vector<CommitRecord>& reference) {
+  if (zircon.size() != reference.size()) {
+    throw std::runtime_error("Zircon and reference commit-prefix lengths differ");
   }
   for (size_t index = 0; index < zircon.size(); ++index) {
     const CommitRecord& actual = zircon[index];
-    const CommitRecord& expected = spike[index];
+    const CommitRecord& expected = reference[index];
     const bool gpr_mismatch = actual.gpr_write != expected.gpr_write ||
       (actual.gpr_write && (actual.gpr_address != expected.gpr_address ||
         actual.gpr_data != expected.gpr_data));
@@ -134,7 +199,7 @@ void compareCommitPrefixes(const std::vector<CommitRecord>& zircon,
         actual.csr_data != expected.csr_data));
     if (actual.privilege != expected.privilege || actual.pc != expected.pc ||
         actual.instruction != expected.instruction || gpr_mismatch || csr_mismatch) {
-      throw std::runtime_error("Zircon and Spike commit records differ at order " +
+      throw std::runtime_error("Zircon and reference commit records differ at order " +
                                std::to_string(index));
     }
   }

@@ -26,8 +26,8 @@ so a real tohost store is expected to remain blocked until M3 rather than being
 misreported as a pass.
 
 The old handwritten partial RV32IM interpreter remains in branch history and
-is not a reference model. Commit-level comparison will use Spike, with Sail as
-the nightly and dispute oracle.
+is not a reference model. Commit-level comparison uses Spike, with the locked
+Sail RISC-V model providing an independently parsed RV32M prefix check.
 
 `make diff SPIKE=/path/to/spike` runs two M1 RV32I/Zicsr and one M2 RV32IM
 commit-prefix smoke. It compares 17 dataflow/CSR/control retirements, 32
@@ -35,3 +35,11 @@ ALU/branch retirements, and 17 RV32M retirements against bounded Spike commit
 logs, then accepts only the expected timeout at each following `tohost` store.
 See [`docs/spike-differential.md`](docs/spike-differential.md) for the exact
 comparison fields and current scope.
+
+`make diff-sail-rv32m SAIL=/path/to/sail_riscv_sim` runs the same explicit
+seed-1, 17-retirement RV32M prefix against Sail-RISC-V commit
+`beaf44991eee362a062fcaaf6fcb78ca428ff710`, which is locked in the parent
+`toolchain.lock.json`. It is bounded reference-model evidence for normal
+integer retirement only, not an ELF pass, full Sail suite, or M3 memory
+differential. The reproducible model build and comparison command are recorded
+in [`docs/spike-differential.md`](docs/spike-differential.md).

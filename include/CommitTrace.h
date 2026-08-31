@@ -25,8 +25,10 @@ std::vector<CommitRecord> parseZirconTrace(std::istream& input,
                                            size_t max_records);
 std::vector<CommitRecord> parseSpikeCommitLog(std::istream& input,
                                               size_t max_records);
+std::vector<CommitRecord> parseSailCommitLog(std::istream& input,
+                                             size_t max_records);
 void compareCommitPrefixes(const std::vector<CommitRecord>& zircon,
-                           const std::vector<CommitRecord>& spike);
+                           const std::vector<CommitRecord>& reference);
 
 }  // namespace zircon::sim
 

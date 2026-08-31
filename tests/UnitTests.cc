@@ -92,6 +92,22 @@ int main(int argc, char** argv) {
   const auto spike_records = zircon::sim::parseSpikeCommitLog(spike_log, 2);
   zircon::sim::compareCommitPrefixes(zircon_records, spike_records);
 
-  std::cout << "unit-tests: deterministic RNG, ELF32, AXI, symbols, tohost, and commit trace passed" << std::endl;
+  std::istringstream sail_log(
+      "[0] [M]: 0x80000000 (0x00500093) addi x1, x0, 0x5\n"
+      "x1 <- 0x00000005\n"
+      "CSR mip (0x344) <- 0x00000080\n"
+      "[1] [M]: 0x80000004 (0x34009173) csrrw x2, mscratch, x1\n"
+      "x2 <- 0x00000000\n"
+      "CSR mscratch (0x340) <- 0x00000005\n");
+  const auto sail_records = zircon::sim::parseSailCommitLog(sail_log, 2);
+  assert(sail_records.size() == 2);
+  assert(sail_records[0].privilege == 3);
+  assert(sail_records[0].gpr_write && sail_records[0].gpr_address == 1);
+  assert(!sail_records[0].csr_write);
+  assert(sail_records[1].gpr_write && sail_records[1].gpr_address == 2);
+  assert(sail_records[1].csr_write && sail_records[1].csr_address == 0x340);
+  assert(sail_records[1].csr_data == 5);
+
+  std::cout << "unit-tests: deterministic RNG, ELF32, AXI, symbols, tohost, and commit trace parsers passed" << std::endl;
   return 0;
 }
