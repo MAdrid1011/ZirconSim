@@ -31,3 +31,26 @@ Both modes share the same generated RTL and deterministic AXI slave. If a
 failure requires a waveform, reproduce the same ELF, seed, and cycle limit on
 the trace binary. A throughput optimization may not remove, sample, filter, or
 reorder retire records, or change AXI ready/valid, response, or error behavior.
+
+## Observed Local Baseline
+
+The following warm-model observation was recorded on the development host after
+building the normal non-waveform binary:
+
+| Field | Value |
+| --- | --- |
+| Command | `/usr/bin/time -p make throughput THROUGHPUT_CYCLES=1000000` |
+| Wall time | 4.72 s |
+| Retired events | 464,333 |
+| Retirements/s | 98,375 |
+| Cycles / seed | 1,000,000 / 1 |
+| ELF SHA-256 | `3300d5796eaa7f2ca7d998a17e018d6d0e1f67941c3508c2129ffe2746322cc1` |
+| Core RTL commit | `2eedc78f731a28c100919e1fd2d61df807126cfd` |
+| ZirconSim commit | `830c844` |
+| Verilator | `5.029 devel rev v5.028-222-g469eca7de` |
+| Waveform instrumentation | disabled |
+
+The corresponding cold normal-model build completed in about 13 seconds and
+produced 13 C++ translation units / 8.892 MB, versus 16 / 11.620 MB for the
+separate waveform model. Both are below the five-minute component budget. This
+is a local M3 baseline, not an M5 workload IPC or release-performance claim.
