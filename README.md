@@ -1,11 +1,21 @@
 # ZirconSim
 
-本项目是在ChiselTest停止更新后，为Zircon-2024处理器设计的C++仿真环境。其性能相比ChiselTest提升了约50%，并无需复杂的Scala库支持。
+`zircon-2026` is the deterministic Verilator and differential-test harness for
+Zircon-2026. It replaces wall-clock randomness, raw-binary-only loading, and
+illegal-instruction termination with explicit seeds, ELF32 loading, symbol
+resolution, and architectural `tohost` completion.
 
-## 使用方法
-
-请将本项目放到Zircon-2024的根目录下。执行如下命令可以构建项目：
-
-```bash
-make 
+```sh
+make unit
+make smoke
 ```
+
+`make unit` checks the deterministic PRNG and loads the software submodule's
+RV32 ELF, including `PT_LOAD`, entry point, and `tohost/fromhost` symbols.
+`make smoke` elaborates the parent RTL, builds `VZirconCore`, and checks the M0
+top-level wiring for a bounded number of cycles. A timeout is only successful
+when `--allow-timeout` is explicit.
+
+The old handwritten partial RV32IM interpreter remains in the branch history
+but is no longer the reference model. Commit-level comparison will use Spike,
+with Sail as the nightly and dispute oracle.

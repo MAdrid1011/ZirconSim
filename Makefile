@@ -1,53 +1,44 @@
-WORK_DIR = $(abspath .)
-VERILOG_DIR = $(WORK_DIR)/../verilog
-CC_DIR = $(WORK_DIR)/src
-BUILD_DIR = $(WORK_DIR)/build
-TAR_DIR = $(BUILD_DIR)/obj
+WORK_DIR := $(abspath .)
+PARENT_DIR := $(abspath ..)
+BUILD_DIR := $(WORK_DIR)/build
+VERILOG_DIR := $(PARENT_DIR)/generated
+VERILOG_TOP := $(VERILOG_DIR)/ZirconCore.sv
+RTL_BINARY := $(BUILD_DIR)/rtl/VZirconCore
+UNIT_BINARY := $(BUILD_DIR)/unit-tests
+TEST_ELF := $(PARENT_DIR)/RV-Software/picotest/build/pico-rv32imaf_zicsr_zifencei-ilp32f.elf
 
+CXX ?= c++
+CXXFLAGS := -std=c++20 -O2 -Wall -Wextra -Werror -I$(WORK_DIR)/include
+VERILATOR_CXXFLAGS := -std=c++20 -O2 -Wall -Wextra \
+	-Wno-unused-parameter -Wno-unused-variable -Wno-unused-but-set-variable \
+	-I$(WORK_DIR)/include
 
-VERILOG_TOP 		= $(VERILOG_DIR)/CPU.sv
-VFLAGS 				= --trace --cc --exe -O3 -I$(VERILOG_DIR) -Mdir $(BUILD_DIR) --no-MMD
-VFLAGS 				+= -Wno-UNOPTFLAT -Wno-WIDTHEXPAND --verilate-jobs 8 
-CINC_PATH 			= -CFLAGS -I$(WORK_DIR)/include
+.PHONY: all unit software verilog rtl smoke clean
 
-REWRITE = $(WORK_DIR)/script/rewrite.mk
+all: unit
 
-CSRCS =  $(shell find $(CC_DIR) -name "*.cc")
-VSRCS = $(shell find $(VERILOG_DIR) -name "*.sv")
-BINARY = $(BUILD_DIR)/VCPU
+unit: $(UNIT_BINARY) software
+	$(UNIT_BINARY) $(TEST_ELF)
 
-IMG = 
-
-COLOR_RED   		= \033[31m
-COLOR_GREEN 		= \033[32m
-COLOR_YELLOW 		= \033[33m
-COLOR_BLUE  		= \033[34m
-COLOR_PURPLE 		= \033[35m
-COLOR_DBLUE 		= \033[36m
-COLOR_NONE  		= \033[0m
-
-
-SCALA_DIR = $(WORK_DIR)/../src/main/scala
-SCALA_SRCS := $(shell find $(SCALA_DIR) -name "*.scala")
-
-
-all: $(BINARY) 
-
-
-$(BINARY): $(CSRCS) $(SCALA_SRCS)
-	@printf "$(COLOR_YELLOW)[SCALA]$(COLOR_NONE) Zircon\n"
-	@$(MAKE) -s -j32 -C ../ sim-verilog
-	@printf "$(COLOR_DBLUE)[VERILATE]$(COLOR_NONE) $(notdir $(BUILD_DIR))/VCPU\n"
+$(UNIT_BINARY): src/ElfImage.cc tests/UnitTests.cc include/ElfImage.h include/DeterministicRng.h
 	@mkdir -p $(BUILD_DIR)
-	@verilator $(VFLAGS) $(CSRCS) $(CINC_PATH) $(VERILOG_TOP)
-	@printf "$(COLOR_DBLUE)[MAKE]$(COLOR_NONE) $(notdir $(BUILD_DIR))/VCPU\n"
-	@$(MAKE) -s -j32 -C $(BUILD_DIR) -f $(REWRITE) 
+	$(CXX) $(CXXFLAGS) src/ElfImage.cc tests/UnitTests.cc -o $@
 
+software:
+	$(MAKE) -C $(PARENT_DIR)/RV-Software/picotest image
 
-run: $(BINARY) 
-	@printf "$(COLOR_YELLOW)[RUN]$(COLOR_NONE) build/$(notdir $<)\n"
-	@$(BINARY) $(IMG) $(ARGS)
+verilog:
+	$(MAKE) -C $(PARENT_DIR) verilog
 
+rtl: verilog
+	@mkdir -p $(BUILD_DIR)/rtl
+	verilator --cc --exe --build --trace -Wall -Wno-fatal \
+		--top-module ZirconCore --Mdir $(BUILD_DIR)/rtl \
+		-CFLAGS "$(VERILATOR_CXXFLAGS)" \
+		$(VERILOG_TOP) src/main.cc src/ElfImage.cc
+
+smoke: rtl software
+	$(RTL_BINARY) --elf $(TEST_ELF) --seed 1 --max-cycles 10 --allow-timeout
 
 clean:
 	rm -rf $(BUILD_DIR)
