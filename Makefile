@@ -36,7 +36,7 @@ rtl: verilog
 	verilator --cc --exe --build --trace -Wall -Wno-fatal -Wno-UNUSEDSIGNAL \
 		--top-module ZirconCore --Mdir $(BUILD_DIR)/rtl \
 		-CFLAGS "$(VERILATOR_CXXFLAGS)" \
-		$(VERILOG_TOP) src/main.cc src/ElfImage.cc
+		$(VERILOG_TOP) $(WORK_DIR)/src/main.cc $(WORK_DIR)/src/ElfImage.cc
 
 smoke: rtl software
 	$(RTL_BINARY) --elf $(TEST_ELF) --seed 1 --max-cycles 10 --allow-timeout
