@@ -1,5 +1,7 @@
 #include <verilated.h>
+#if defined(ZIRCON_SIM_TRACE)
 #include <verilated_vcd_c.h>
+#endif
 
 #include <cstdint>
 #include <cstdlib>
@@ -95,6 +97,11 @@ Options parseOptions(int argc, char** argv) {
   if (options.elf.empty() || options.retire_trace.empty()) {
     throw std::invalid_argument("--elf and --retire-trace are required");
   }
+#if !defined(ZIRCON_SIM_TRACE)
+  if (options.wave) {
+    throw std::invalid_argument("--wave requires the trace-rtl binary");
+  }
+#endif
   return options;
 }
 
@@ -239,24 +246,32 @@ int main(int argc, char** argv) {
     zircon::sim::TestExitMonitor retired_exit(*tohost);
     Verilated::commandArgs(argc, argv);
     VZirconCore dut;
+#if defined(ZIRCON_SIM_TRACE)
     VerilatedVcdC wave;
     uint64_t simulation_time = 0;
+#endif
     uint64_t expected_order = 0;
+#if defined(ZIRCON_SIM_TRACE)
     if (options.wave) {
       Verilated::traceEverOn(true);
       dut.trace(&wave, 8);
       wave.open("build/zircon.vcd");
     }
+#endif
 
     driveSlave(dut, {});
     dut.reset = 1;
     for (int reset_cycle = 0; reset_cycle < 2; ++reset_cycle) {
       dut.clock = 0;
       dut.eval();
+#if defined(ZIRCON_SIM_TRACE)
       if (options.wave) wave.dump(simulation_time++);
+#endif
       dut.clock = 1;
       dut.eval();
+#if defined(ZIRCON_SIM_TRACE)
       if (options.wave) wave.dump(simulation_time++);
+#endif
     }
     dut.reset = 0;
 
@@ -266,7 +281,9 @@ int main(int argc, char** argv) {
       const auto slave = memory.drive();
       driveSlave(dut, slave);
       dut.eval();
+#if defined(ZIRCON_SIM_TRACE)
       if (options.wave) wave.dump(simulation_time++);
+#endif
       const RetireEvent first_retired = lane0(dut);
       const RetireEvent second_retired = lane1(dut);
       emitTrace(trace_stream, first_retired, expected_order);
@@ -278,7 +295,9 @@ int main(int argc, char** argv) {
       }
       if (options.stop_after_retired != 0 && expected_order >= options.stop_after_retired) {
         dut.final();
+#if defined(ZIRCON_SIM_TRACE)
         if (options.wave) wave.close();
+#endif
         std::cout << "{\"status\":\"retire-limit\",\"cycles\":" << cycle + 1
                   << ",\"seed\":" << options.seed << ",\"entry\":" << image.entry()
                   << ",\"retired\":" << expected_order << "}" << std::endl;
@@ -288,11 +307,15 @@ int main(int argc, char** argv) {
 
       dut.clock = 1;
       dut.eval();
+#if defined(ZIRCON_SIM_TRACE)
       if (options.wave) wave.dump(simulation_time++);
+#endif
       memory.advance(master, slave);
       if (retired_exit_status.has_value()) {
         dut.final();
+#if defined(ZIRCON_SIM_TRACE)
         if (options.wave) wave.close();
+#endif
         const int status = *retired_exit_status;
         std::cout << "{\"status\":\"tohost\",\"cycles\":" << cycle + 1
                   << ",\"seed\":" << options.seed << ",\"entry\":" << image.entry()
@@ -303,7 +326,9 @@ int main(int argc, char** argv) {
     }
 
     dut.final();
+#if defined(ZIRCON_SIM_TRACE)
     if (options.wave) wave.close();
+#endif
     if (expected_order < options.expect_retired) {
       std::cerr << "zircon-sim: retired " << expected_order << " events, expected at least "
                 << options.expect_retired << std::endl;

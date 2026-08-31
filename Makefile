@@ -1,10 +1,11 @@
 WORK_DIR := $(abspath .)
 PARENT_DIR := $(abspath ..)
 BUILD_DIR := $(WORK_DIR)/build
-VERILOG_DIR := $(PARENT_DIR)/generated-trace
-VERILOG_TOP := $(VERILOG_DIR)/ZirconCore.sv
-VERILOG_SOURCES = $(wildcard $(VERILOG_DIR)/*.sv)
+RETIRE_VERILOG_DIR := $(PARENT_DIR)/generated-trace
+RETIRE_VERILOG_TOP := $(RETIRE_VERILOG_DIR)/ZirconCore.sv
+RETIRE_VERILOG_SOURCES = $(wildcard $(RETIRE_VERILOG_DIR)/*.sv)
 RTL_BINARY := $(BUILD_DIR)/rtl/VZirconCore
+TRACE_RTL_BINARY := $(BUILD_DIR)/trace-rtl/VZirconCore
 UNIT_BINARY := $(BUILD_DIR)/unit-tests
 DIFF_BINARY := $(BUILD_DIR)/commit-trace-diff
 BASELINE_IPC_BINARY := $(BUILD_DIR)/baseline-ipc-runner
@@ -19,6 +20,9 @@ DIFF_RV32M_ELF := $(BUILD_DIR)/rv32m-commit-prefix.elf
 DIFF_RV32M_TRACE := $(BUILD_DIR)/rv32m-commit-prefix.jsonl
 DIFF_RV32M_SPIKE_LOG := $(BUILD_DIR)/rv32m-commit-prefix.spike.log
 DIFF_RV32M_SAIL_LOG := $(BUILD_DIR)/rv32m-commit-prefix.sail.log
+THROUGHPUT_ELF := $(BUILD_DIR)/sim-throughput.elf
+THROUGHPUT_TRACE := $(BUILD_DIR)/sim-throughput.jsonl
+THROUGHPUT_CYCLES ?= 100000
 SPIKE ?= spike
 SAIL ?= sail_riscv_sim
 BASELINE_2024 ?=
@@ -35,8 +39,14 @@ VERILATOR_CXXFLAGS := -std=c++20 -O2 -Wall -Wextra \
 	-Wno-sign-compare -Wno-unused-parameter -Wno-unused-variable \
 	-Wno-unused-but-set-variable \
 	-I$(WORK_DIR)/include
+TRACE_VERILATOR_CXXFLAGS := $(VERILATOR_CXXFLAGS) -DZIRCON_SIM_TRACE=1
+RTL_SOURCES := $(WORK_DIR)/src/main.cc $(WORK_DIR)/src/DeterministicAxiMemory.cc \
+	$(WORK_DIR)/src/ElfImage.cc
+CORE_SCALA_SOURCES := $(shell find $(PARENT_DIR)/src/main/scala -type f -name '*.scala')
+CORE_BUILD_INPUTS := $(CORE_SCALA_SOURCES) $(PARENT_DIR)/build.sbt \
+	$(wildcard $(PARENT_DIR)/project/*.sbt) $(wildcard $(PARENT_DIR)/project/*.scala)
 
-.PHONY: all unit software verilog rtl smoke tohost-rv32m diff diff-prefix diff-alu-branch diff-rv32m diff-sail-rv32m micro-ipc-rv32m check-baseline-2024 baseline-ipc-rv32m clean
+.PHONY: all unit software verilog trace-verilog rtl trace-rtl smoke trace-smoke tohost-rv32m throughput diff diff-prefix diff-alu-branch diff-rv32m diff-sail-rv32m micro-ipc-rv32m check-baseline-2024 baseline-ipc-rv32m clean
 
 all: unit
 
@@ -78,18 +88,42 @@ software:
 verilog:
 	$(MAKE) -C $(PARENT_DIR) trace-verilog
 
-rtl: verilog
+
+trace-verilog:
+	$(MAKE) -C $(PARENT_DIR) trace-verilog
+
+$(RETIRE_VERILOG_TOP): $(CORE_BUILD_INPUTS)
+	$(MAKE) -C $(PARENT_DIR) trace-verilog
+
+$(RTL_BINARY): $(RETIRE_VERILOG_TOP) $(RTL_SOURCES)
 	@mkdir -p $(BUILD_DIR)/rtl
-	verilator --cc --exe --build --trace -Wall -Wno-fatal -Wno-UNUSEDSIGNAL \
+	verilator --cc --exe --build -Wall -Wno-fatal -Wno-UNUSEDSIGNAL \
 		--top-module ZirconCore --Mdir $(BUILD_DIR)/rtl \
 		-CFLAGS "$(VERILATOR_CXXFLAGS)" \
-		$(VERILOG_SOURCES) $(WORK_DIR)/src/main.cc $(WORK_DIR)/src/DeterministicAxiMemory.cc $(WORK_DIR)/src/ElfImage.cc
+		$(RETIRE_VERILOG_SOURCES) $(RTL_SOURCES)
+
+$(TRACE_RTL_BINARY): $(RETIRE_VERILOG_TOP) $(RTL_SOURCES)
+	@mkdir -p $(BUILD_DIR)/trace-rtl
+	verilator --cc --exe --build --trace -Wall -Wno-fatal -Wno-UNUSEDSIGNAL \
+		--top-module ZirconCore --Mdir $(BUILD_DIR)/trace-rtl \
+		-CFLAGS "$(TRACE_VERILATOR_CXXFLAGS)" \
+		$(RETIRE_VERILOG_SOURCES) $(RTL_SOURCES)
+
+rtl: $(RTL_BINARY)
+
+trace-rtl: $(TRACE_RTL_BINARY)
 
 smoke: rtl software
 	$(RTL_BINARY) --elf $(TEST_ELF) --retire-trace $(BUILD_DIR)/smoke-retire.jsonl --seed 1 --max-cycles 10 --allow-timeout
 
+trace-smoke: trace-rtl software
+	$(TRACE_RTL_BINARY) --elf $(TEST_ELF) --retire-trace $(BUILD_DIR)/trace-smoke-retire.jsonl --seed 1 --max-cycles 10 --allow-timeout --wave
+
 tohost-rv32m: rtl $(DIFF_RV32M_ELF)
 	$(RTL_BINARY) --elf $(DIFF_RV32M_ELF) --retire-trace $(BUILD_DIR)/rv32m-tohost.jsonl --seed 1 --max-cycles 2048
+
+throughput: rtl $(THROUGHPUT_ELF)
+	$(RTL_BINARY) --elf $(THROUGHPUT_ELF) --retire-trace $(THROUGHPUT_TRACE) --seed 1 --max-cycles $(THROUGHPUT_CYCLES) --allow-timeout
 
 diff: diff-prefix diff-alu-branch diff-rv32m
 

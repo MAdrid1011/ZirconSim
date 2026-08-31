@@ -12,8 +12,11 @@ make smoke
 
 `make unit` checks the deterministic PRNG and loads the software submodule's
 RV32 ELF, including `PT_LOAD`, entry point, and `tohost/fromhost` symbols.
-`make smoke` generates the trace-enabled parent RTL, builds `VZirconCore`, and
-runs a bounded deterministic ELF/AXI/retire-trace harness. The resulting
+`make smoke` generates parent RTL with its mandatory retire ports, then builds
+the high-throughput `VZirconCore` without Verilator waveform instrumentation
+and runs a bounded deterministic ELF/AXI/retire-trace harness. `make
+trace-smoke` builds the separate waveform-enabled binary and is the only target
+that accepts `--wave`. The resulting
 `build/smoke-retire.jsonl` contains commit events in architectural order. A
 timeout is only successful when `--allow-timeout` is explicit; it is a harness
 smoke result, never an ELF pass result.
@@ -51,3 +54,8 @@ runs the same prefix and deterministic AXI slave through the immutable 2024
 Verilator model. These are early fixed-prefix IPC measurements only; their
 scope and required baseline checkout are defined in
 [`docs/ipc-microbenchmark.md`](docs/ipc-microbenchmark.md).
+
+`make throughput THROUGHPUT_CYCLES=100000` measures the normal non-waveform
+full-core model while retaining every JSONL retire event. The reproducible
+command and required evidence are defined in
+[`docs/simulation-throughput.md`](docs/simulation-throughput.md).
