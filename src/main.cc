@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -19,6 +20,7 @@ struct Options {
   std::string retire_trace;
   uint64_t seed = 1;
   uint64_t max_cycles = 1000000;
+  uint64_t expect_retired = 0;
   bool allow_timeout = false;
   bool wave = false;
 };
@@ -64,7 +66,8 @@ Options parseOptions(int argc, char** argv) {
   for (int index = 1; index < argc; ++index) {
     const std::string argument = argv[index];
     if ((argument == "--elf" || argument == "--retire-trace" ||
-         argument == "--seed" || argument == "--max-cycles") &&
+         argument == "--seed" || argument == "--max-cycles" ||
+         argument == "--expect-retired") &&
         index + 1 >= argc) {
       throw std::invalid_argument("missing value for " + argument);
     }
@@ -76,6 +79,8 @@ Options parseOptions(int argc, char** argv) {
       options.seed = parseUnsigned(argv[++index], "--seed");
     } else if (argument == "--max-cycles") {
       options.max_cycles = parseUnsigned(argv[++index], "--max-cycles");
+    } else if (argument == "--expect-retired") {
+      options.expect_retired = parseUnsigned(argv[++index], "--expect-retired");
     } else if (argument == "--allow-timeout") {
       options.allow_timeout = true;
     } else if (argument == "--wave") {
@@ -136,6 +141,7 @@ void emitTrace(std::ostream& stream, const RetireEvent& event, uint64_t& expecte
     throw std::runtime_error("non-monotonic or duplicate retire order");
   }
   ++expected_order;
+  stream << std::boolalpha;
   stream << "{\"order\":" << event.order << ",\"pc\":" << event.pc
          << ",\"instruction\":" << event.instruction
          << ",\"privilege\":" << static_cast<unsigned>(event.privilege)
@@ -270,6 +276,11 @@ int main(int argc, char** argv) {
 
     dut.final();
     if (options.wave) wave.close();
+    if (expected_order < options.expect_retired) {
+      std::cerr << "zircon-sim: retired " << expected_order << " events, expected at least "
+                << options.expect_retired << std::endl;
+      return 3;
+    }
     std::cout << "{\"status\":\"timeout\",\"cycles\":" << options.max_cycles
               << ",\"seed\":" << options.seed << ",\"entry\":" << image.entry()
               << ",\"tohost\":" << *tohost << ",\"retired\":" << expected_order

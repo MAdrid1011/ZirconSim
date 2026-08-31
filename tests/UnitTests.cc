@@ -1,7 +1,9 @@
 #include <cassert>
+#include <sstream>
 #include <iostream>
 #include <stdexcept>
 
+#include "CommitTrace.h"
 #include "DeterministicRng.h"
 #include "DeterministicAxiMemory.h"
 #include "ElfImage.h"
@@ -80,6 +82,16 @@ int main(int argc, char** argv) {
   }
   assert(observed_read);
 
-  std::cout << "unit-tests: deterministic RNG, ELF32, AXI, symbols, and tohost passed" << std::endl;
+  std::istringstream zircon_trace(
+      "{\"order\":0,\"pc\":2147483648,\"instruction\":5243027,\"privilege\":3,\"gprWrite\":true,\"gprAddress\":1,\"gprData\":5,\"fprWrite\":false,\"csrWrite\":false,\"csrAddress\":0,\"csrData\":0,\"memoryReadMask\":0,\"memoryWriteMask\":0,\"trap\":false,\"interrupt\":false}\n"
+      "{\"order\":1,\"pc\":2147483652,\"instruction\":99,\"privilege\":3,\"gprWrite\":false,\"gprAddress\":8,\"gprData\":123,\"fprWrite\":false,\"csrWrite\":false,\"csrAddress\":832,\"csrData\":14,\"memoryReadMask\":0,\"memoryWriteMask\":0,\"trap\":false,\"interrupt\":false}\n");
+  std::istringstream spike_log(
+      "core   0: 3 0x80000000 (0x00500093) x1  0x00000005\n"
+      "core   0: 3 0x80000004 (0x00000063)\n");
+  const auto zircon_records = zircon::sim::parseZirconTrace(zircon_trace, 2);
+  const auto spike_records = zircon::sim::parseSpikeCommitLog(spike_log, 2);
+  zircon::sim::compareCommitPrefixes(zircon_records, spike_records);
+
+  std::cout << "unit-tests: deterministic RNG, ELF32, AXI, symbols, tohost, and commit trace passed" << std::endl;
   return 0;
 }
