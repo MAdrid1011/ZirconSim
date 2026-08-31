@@ -1,16 +1,23 @@
 # M1 Spike Commit-Prefix Differential
 
 `CommitTraceDiff` compares the temporary executable M1 core with the exact
-Spike revision in the parent `toolchain.lock.json`. The test program is a
-freestanding `RV32I_Zicsr_Zifencei` ELF at `0x80000000`; its first 17 dynamic
-instructions exercise integer dataflow, a taken branch, JAL, and committed CSR
-read/write behavior. Instruction 18 is a `tohost` store and must block in M1,
-because no LSU exists yet.
+Spike revision in the parent `toolchain.lock.json`. `make diff` runs two
+freestanding `RV32I_Zicsr_Zifencei` ELFs at `0x80000000`:
 
-The RTL runner receives an explicit nonzero AXI seed, `--expect-retired 17`,
-and a fixed cycle limit. It may return only the explicit allowed timeout after
-the required prefix has retired. Spike uses `--instructions=17`, so its log is
-also bounded by architectural retirement rather than host elapsed time.
+- `rv32i-commit-prefix` compares 17 dynamic instructions covering integer
+  dataflow, a taken branch, JAL, and committed CSR read/write behavior.
+- `rv32i-alu-branch-prefix` compares 32 dynamic instructions covering every
+  register and immediate integer ALU encoding, `LUI`, `JALR`, and all six legal
+  conditional branch relations with a mix of taken and not-taken control flow.
+
+Each next instruction is a `tohost` store and must block in M1, because no LSU
+exists yet.
+
+Each RTL runner receives explicit nonzero AXI seed 1, a prefix-specific
+`--expect-retired` count, and a fixed cycle limit. It may return only the
+explicit allowed timeout after the required prefix has retired. Spike uses the
+same prefix-specific `--instructions` count, so each log is bounded by
+architectural retirement rather than host elapsed time.
 
 For every event, the comparator requires matching M-mode privilege, PC,
 instruction bits, optional GPR write, and optional CSR write. It rejects trap,
@@ -24,5 +31,5 @@ Run from `ZirconSim` with an explicitly built locked Spike binary:
 make diff SPIKE=/path/to/spike
 ```
 
-The command retains `build/rv32i-commit-prefix.jsonl` and
-`build/rv32i-commit-prefix.spike.log` as reproducible failure evidence.
+The command retains both program JSONL and Spike logs in `build/` as
+reproducible failure evidence.
