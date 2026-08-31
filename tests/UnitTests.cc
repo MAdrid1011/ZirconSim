@@ -1,8 +1,11 @@
 #include <cassert>
+#include <sstream>
 #include <iostream>
 #include <stdexcept>
 
+#include "CommitTrace.h"
 #include "DeterministicRng.h"
+#include "DeterministicAxiMemory.h"
 #include "ElfImage.h"
 
 int main(int argc, char** argv) {
@@ -41,6 +44,70 @@ int main(int argc, char** argv) {
   zircon::sim::TestExitMonitor failure_monitor(*tohost);
   assert(failure_monitor.observeWrite(*tohost, 7, 0xf).value() == 3);
 
-  std::cout << "unit-tests: deterministic RNG, ELF32, symbols, and tohost passed" << std::endl;
+  zircon::sim::SparseMemory memory;
+  memory.write32(0x80000000u, 0x00500093u);
+  zircon::sim::DeterministicAxiMemory axi(memory, 7, std::nullopt);
+  zircon::sim::AxiMasterSignals ar;
+  ar.ar_valid = true;
+  ar.ar_id = 2;
+  ar.ar_addr = 0x80000000u;
+  ar.ar_len = 0;
+  ar.ar_size = 2;
+  ar.ar_burst = 1;
+  zircon::sim::AxiSlaveSignals slave;
+  for (int cycle = 0; cycle < 32; ++cycle) {
+    slave = axi.drive();
+    axi.advance(ar, slave);
+    if (slave.ar_ready) {
+      ar.ar_valid = false;
+      break;
+    }
+  }
+  assert(!ar.ar_valid);
+
+  bool observed_read = false;
+  for (int cycle = 0; cycle < 32; ++cycle) {
+    slave = axi.drive();
+    zircon::sim::AxiMasterSignals r;
+    r.r_ready = true;
+    axi.advance(r, slave);
+    if (slave.r_valid) {
+      assert(slave.r_id == 2);
+      assert(slave.r_data == 0x00500093u);
+      assert(slave.r_resp == 0);
+      assert(slave.r_last);
+      observed_read = true;
+      break;
+    }
+  }
+  assert(observed_read);
+
+  std::istringstream zircon_trace(
+      "{\"order\":0,\"pc\":2147483648,\"instruction\":5243027,\"privilege\":3,\"gprWrite\":true,\"gprAddress\":1,\"gprData\":5,\"fprWrite\":false,\"csrWrite\":false,\"csrAddress\":0,\"csrData\":0,\"memoryReadMask\":0,\"memoryWriteMask\":0,\"trap\":false,\"interrupt\":false}\n"
+      "{\"order\":1,\"pc\":2147483652,\"instruction\":99,\"privilege\":3,\"gprWrite\":false,\"gprAddress\":8,\"gprData\":123,\"fprWrite\":false,\"csrWrite\":false,\"csrAddress\":832,\"csrData\":14,\"memoryReadMask\":0,\"memoryWriteMask\":0,\"trap\":false,\"interrupt\":false}\n");
+  std::istringstream spike_log(
+      "core   0: 3 0x80000000 (0x00500093) x1  0x00000005\n"
+      "core   0: 3 0x80000004 (0x00000063)\n");
+  const auto zircon_records = zircon::sim::parseZirconTrace(zircon_trace, 2);
+  const auto spike_records = zircon::sim::parseSpikeCommitLog(spike_log, 2);
+  zircon::sim::compareCommitPrefixes(zircon_records, spike_records);
+
+  std::istringstream sail_log(
+      "[0] [M]: 0x80000000 (0x00500093) addi x1, x0, 0x5\n"
+      "x1 <- 0x00000005\n"
+      "CSR mip (0x344) <- 0x00000080\n"
+      "[1] [M]: 0x80000004 (0x34009173) csrrw x2, mscratch, x1\n"
+      "x2 <- 0x00000000\n"
+      "CSR mscratch (0x340) <- 0x00000005\n");
+  const auto sail_records = zircon::sim::parseSailCommitLog(sail_log, 2);
+  assert(sail_records.size() == 2);
+  assert(sail_records[0].privilege == 3);
+  assert(sail_records[0].gpr_write && sail_records[0].gpr_address == 1);
+  assert(!sail_records[0].csr_write);
+  assert(sail_records[1].gpr_write && sail_records[1].gpr_address == 2);
+  assert(sail_records[1].csr_write && sail_records[1].csr_address == 0x340);
+  assert(sail_records[1].csr_data == 5);
+
+  std::cout << "unit-tests: deterministic RNG, ELF32, AXI, symbols, tohost, and commit trace parsers passed" << std::endl;
   return 0;
 }

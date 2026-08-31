@@ -1,45 +1,129 @@
 WORK_DIR := $(abspath .)
 PARENT_DIR := $(abspath ..)
 BUILD_DIR := $(WORK_DIR)/build
-VERILOG_DIR := $(PARENT_DIR)/generated
+VERILOG_DIR := $(PARENT_DIR)/generated-trace
 VERILOG_TOP := $(VERILOG_DIR)/ZirconCore.sv
+VERILOG_SOURCES = $(wildcard $(VERILOG_DIR)/*.sv)
 RTL_BINARY := $(BUILD_DIR)/rtl/VZirconCore
 UNIT_BINARY := $(BUILD_DIR)/unit-tests
+DIFF_BINARY := $(BUILD_DIR)/commit-trace-diff
+BASELINE_IPC_BINARY := $(BUILD_DIR)/baseline-ipc-runner
 TEST_ELF := $(PARENT_DIR)/RV-Software/picotest/build/pico-rv32imaf_zicsr_zifencei-ilp32f.elf
+DIFF_PREFIX_ELF := $(BUILD_DIR)/rv32i-commit-prefix.elf
+DIFF_PREFIX_TRACE := $(BUILD_DIR)/rv32i-commit-prefix.jsonl
+DIFF_PREFIX_SPIKE_LOG := $(BUILD_DIR)/rv32i-commit-prefix.spike.log
+DIFF_ALU_BRANCH_ELF := $(BUILD_DIR)/rv32i-alu-branch-prefix.elf
+DIFF_ALU_BRANCH_TRACE := $(BUILD_DIR)/rv32i-alu-branch-prefix.jsonl
+DIFF_ALU_BRANCH_SPIKE_LOG := $(BUILD_DIR)/rv32i-alu-branch-prefix.spike.log
+DIFF_RV32M_ELF := $(BUILD_DIR)/rv32m-commit-prefix.elf
+DIFF_RV32M_TRACE := $(BUILD_DIR)/rv32m-commit-prefix.jsonl
+DIFF_RV32M_SPIKE_LOG := $(BUILD_DIR)/rv32m-commit-prefix.spike.log
+DIFF_RV32M_SAIL_LOG := $(BUILD_DIR)/rv32m-commit-prefix.sail.log
+SPIKE ?= spike
+SAIL ?= sail_riscv_sim
+BASELINE_2024 ?=
+BASELINE_2024_CORE_SHA := 65a3dd381f4c83a5844858a927dafdbc8263c35e
+BASELINE_2024_SOFTWARE_SHA := 5f81f2ad378f537182e4cf1a0fcb45159509a2ec
+BASELINE_2024_SIM_SHA := b1694da4a92046edeead50c9b2a1c086a13e6511
+VERILATOR_INCLUDE ?= /usr/local/share/verilator/include
 
 CXX ?= c++
 CXXFLAGS := -std=c++20 -O2 -Wall -Wextra -Werror -I$(WORK_DIR)/include
+BASELINE_CXXFLAGS := $(CXXFLAGS) -Wno-error=unused-parameter -Wno-error=sign-compare \
+	-Wno-unused-parameter -Wno-sign-compare
 VERILATOR_CXXFLAGS := -std=c++20 -O2 -Wall -Wextra \
 	-Wno-sign-compare -Wno-unused-parameter -Wno-unused-variable \
 	-Wno-unused-but-set-variable \
 	-I$(WORK_DIR)/include
 
-.PHONY: all unit software verilog rtl smoke clean
+.PHONY: all unit software verilog rtl smoke diff diff-prefix diff-alu-branch diff-rv32m diff-sail-rv32m micro-ipc-rv32m check-baseline-2024 baseline-ipc-rv32m clean
 
 all: unit
 
 unit: $(UNIT_BINARY) software
 	$(UNIT_BINARY) $(TEST_ELF)
 
-$(UNIT_BINARY): src/ElfImage.cc tests/UnitTests.cc include/ElfImage.h include/DeterministicRng.h
+$(UNIT_BINARY): src/CommitTrace.cc src/DeterministicAxiMemory.cc src/ElfImage.cc tests/UnitTests.cc include/CommitTrace.h include/DeterministicAxiMemory.h include/ElfImage.h include/DeterministicRng.h
 	@mkdir -p $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) src/ElfImage.cc tests/UnitTests.cc -o $@
+	$(CXX) $(CXXFLAGS) src/CommitTrace.cc src/DeterministicAxiMemory.cc src/ElfImage.cc tests/UnitTests.cc -o $@
+
+$(DIFF_BINARY): src/CommitTrace.cc src/CommitTraceDiff.cc include/CommitTrace.h
+	@mkdir -p $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) src/CommitTrace.cc src/CommitTraceDiff.cc -o $@
+
+$(BASELINE_IPC_BINARY): src/BaselineIpcRunner.cc src/DeterministicAxiMemory.cc src/ElfImage.cc include/DeterministicAxiMemory.h include/ElfImage.h
+	@test -n "$(BASELINE_2024)" || (echo "BASELINE_2024 must name a clean Zircon-2024 checkout"; exit 2)
+	@test -f "$(BASELINE_2024)/ZirconSim/build/VCPU__ALL.a" || (echo "build the baseline VCPU first"; exit 2)
+	$(CXX) $(BASELINE_CXXFLAGS) -I$(BASELINE_2024)/ZirconSim/build -I$(VERILATOR_INCLUDE) \
+		src/BaselineIpcRunner.cc src/DeterministicAxiMemory.cc src/ElfImage.cc \
+		$(BASELINE_2024)/ZirconSim/build/VCPU__ALL.a \
+		$(VERILATOR_INCLUDE)/verilated.cpp $(VERILATOR_INCLUDE)/verilated_threads.cpp \
+		$(VERILATOR_INCLUDE)/verilated_vcd_c.cpp -pthread -latomic -o $@
+
+$(BUILD_DIR)/%.elf: tests/%.S tests/rv32i-commit-prefix.ld
+	@mkdir -p $(BUILD_DIR)
+	clang --target=riscv32 -march=rv32i_zicsr_zifencei -mabi=ilp32 -nostdlib -fuse-ld=lld \
+		-Wl,-T,$(WORK_DIR)/tests/rv32i-commit-prefix.ld -Wl,--build-id=none \
+		-Wl,-e,_start -o $@ $<
+
+$(DIFF_RV32M_ELF): tests/rv32m-commit-prefix.S tests/rv32i-commit-prefix.ld
+	@mkdir -p $(BUILD_DIR)
+	clang --target=riscv32 -march=rv32im_zicsr_zifencei -mabi=ilp32 -nostdlib -fuse-ld=lld \
+		-Wl,-T,$(WORK_DIR)/tests/rv32i-commit-prefix.ld -Wl,--build-id=none \
+		-Wl,-e,_start -o $@ $<
 
 software:
 	$(MAKE) -C $(PARENT_DIR)/RV-Software/picotest image
 
 verilog:
-	$(MAKE) -C $(PARENT_DIR) verilog
+	$(MAKE) -C $(PARENT_DIR) trace-verilog
 
 rtl: verilog
 	@mkdir -p $(BUILD_DIR)/rtl
 	verilator --cc --exe --build --trace -Wall -Wno-fatal -Wno-UNUSEDSIGNAL \
 		--top-module ZirconCore --Mdir $(BUILD_DIR)/rtl \
 		-CFLAGS "$(VERILATOR_CXXFLAGS)" \
-		$(VERILOG_TOP) $(WORK_DIR)/src/main.cc $(WORK_DIR)/src/ElfImage.cc
+		$(VERILOG_SOURCES) $(WORK_DIR)/src/main.cc $(WORK_DIR)/src/DeterministicAxiMemory.cc $(WORK_DIR)/src/ElfImage.cc
 
 smoke: rtl software
-	$(RTL_BINARY) --elf $(TEST_ELF) --seed 1 --max-cycles 10 --allow-timeout
+	$(RTL_BINARY) --elf $(TEST_ELF) --retire-trace $(BUILD_DIR)/smoke-retire.jsonl --seed 1 --max-cycles 10 --allow-timeout
+
+diff: diff-prefix diff-alu-branch diff-rv32m
+
+diff-prefix: rtl $(DIFF_BINARY) $(DIFF_PREFIX_ELF)
+	$(RTL_BINARY) --elf $(DIFF_PREFIX_ELF) --retire-trace $(DIFF_PREFIX_TRACE) --seed 1 --max-cycles 1024 --expect-retired 17 --allow-timeout
+	$(SPIKE) --isa=RV32I_Zicsr_Zifencei --priv=m --pc=0x80000000 --instructions=17 --log-commits --log=$(DIFF_PREFIX_SPIKE_LOG) $(DIFF_PREFIX_ELF)
+	$(DIFF_BINARY) --zircon-trace $(DIFF_PREFIX_TRACE) --spike-log $(DIFF_PREFIX_SPIKE_LOG) --max-events 17
+
+diff-alu-branch: rtl $(DIFF_BINARY) $(DIFF_ALU_BRANCH_ELF)
+	$(RTL_BINARY) --elf $(DIFF_ALU_BRANCH_ELF) --retire-trace $(DIFF_ALU_BRANCH_TRACE) --seed 1 --max-cycles 1024 --expect-retired 32 --allow-timeout
+	$(SPIKE) --isa=RV32I_Zicsr_Zifencei --priv=m --pc=0x80000000 --instructions=32 --log-commits --log=$(DIFF_ALU_BRANCH_SPIKE_LOG) $(DIFF_ALU_BRANCH_ELF)
+	$(DIFF_BINARY) --zircon-trace $(DIFF_ALU_BRANCH_TRACE) --spike-log $(DIFF_ALU_BRANCH_SPIKE_LOG) --max-events 32
+
+diff-rv32m: rtl $(DIFF_BINARY) $(DIFF_RV32M_ELF)
+	$(RTL_BINARY) --elf $(DIFF_RV32M_ELF) --retire-trace $(DIFF_RV32M_TRACE) --seed 1 --max-cycles 2048 --expect-retired 17 --allow-timeout
+	$(SPIKE) --isa=RV32IM_Zicsr_Zifencei --priv=m --pc=0x80000000 --instructions=17 --log-commits --log=$(DIFF_RV32M_SPIKE_LOG) $(DIFF_RV32M_ELF)
+	$(DIFF_BINARY) --zircon-trace $(DIFF_RV32M_TRACE) --spike-log $(DIFF_RV32M_SPIKE_LOG) --max-events 17
+
+diff-sail-rv32m: rtl $(DIFF_BINARY) $(DIFF_RV32M_ELF)
+	$(RTL_BINARY) --elf $(DIFF_RV32M_ELF) --retire-trace $(DIFF_RV32M_TRACE) --seed 1 --max-cycles 2048 --expect-retired 17 --allow-timeout
+	$(SAIL) --rv32 --inst-limit 17 --trace-output $(DIFF_RV32M_SAIL_LOG) --trace-instr --trace-gpr --trace-csr $(DIFF_RV32M_ELF)
+	$(DIFF_BINARY) --zircon-trace $(DIFF_RV32M_TRACE) --sail-log $(DIFF_RV32M_SAIL_LOG) --max-events 17
+
+micro-ipc-rv32m: rtl $(DIFF_RV32M_ELF)
+	$(RTL_BINARY) --elf $(DIFF_RV32M_ELF) --retire-trace $(BUILD_DIR)/rv32m-ipc-prefix.jsonl --seed 1 --max-cycles 2048 --expect-retired 17 --stop-after-retired 17
+
+check-baseline-2024:
+	@test -n "$(BASELINE_2024)" || (echo "BASELINE_2024 must name a clean Zircon-2024 checkout"; exit 2)
+	@test "$$(git -C $(BASELINE_2024) rev-parse HEAD)" = "$(BASELINE_2024_CORE_SHA)" || (echo "BASELINE_2024 core SHA does not match the immutable baseline"; exit 2)
+	@test "$$(git -C $(BASELINE_2024)/RV-Software rev-parse HEAD)" = "$(BASELINE_2024_SOFTWARE_SHA)" || (echo "BASELINE_2024 RV-Software SHA does not match the immutable baseline"; exit 2)
+	@test "$$(git -C $(BASELINE_2024)/ZirconSim rev-parse HEAD)" = "$(BASELINE_2024_SIM_SHA)" || (echo "BASELINE_2024 ZirconSim SHA does not match the immutable baseline"; exit 2)
+	@test -z "$$(git -C $(BASELINE_2024) status --porcelain)" || (echo "BASELINE_2024 must be clean"; exit 2)
+
+baseline-ipc-rv32m: check-baseline-2024 $(DIFF_RV32M_ELF)
+	$(MAKE) -C $(BASELINE_2024)/ZirconSim
+	$(MAKE) $(BASELINE_IPC_BINARY) BASELINE_2024=$(BASELINE_2024)
+	$(BASELINE_IPC_BINARY) --elf $(DIFF_RV32M_ELF) --seed 1 --max-cycles 2048 --stop-after-retired 17
 
 clean:
 	rm -rf $(BUILD_DIR)
