@@ -28,9 +28,10 @@ holds each R/B response until handshake, tracks IDs/beats/last, and observes
 input, then returns success only after a normal `RetireEvent` records the
 matching store and the deterministic AXI backing memory contains the same
 nonzero `tohost` value. An accepted AXI W beat or a retire event alone is not
-an ELF pass. `make tohost` runs the two RV32I and one RV32M seed-1 completion
-smokes; the individual `tohost-rv32i-prefix`, `tohost-rv32i-alu-branch`, and
-`tohost-rv32m` targets retain their exact JSONL evidence.
+an ELF pass. `make tohost` runs the two RV32I, RV32M, and RV32A seed-1
+completion smokes; the individual `tohost-rv32i-prefix`,
+`tohost-rv32i-alu-branch`, `tohost-rv32m`, and `tohost-rv32a` targets retain
+their exact JSONL evidence.
 
 The old handwritten partial RV32IM interpreter remains in branch history and
 is not a reference model. Commit-level comparison uses Spike, with the locked

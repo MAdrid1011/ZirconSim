@@ -34,9 +34,11 @@ make tohost
 ```
 
 The current seed-1 evidence is 233 cycles / 19 retirements for the RV32I CSR
-prefix, 330 / 34 for the RV32I ALU/branch prefix, and 275 / 19 for the RV32M
-prefix. These confirm externally visible `tohost` completion only; they are not
-Spike or Sail differential results.
+prefix, 330 / 34 for the RV32I ALU/branch prefix, 275 / 19 for the RV32M
+prefix, and 219 / 12 for the RV32A smoke. The RV32A trace records `amoadd.w`
+old-value 7/new-value 12, `lr.w` value 12, successful `sc.w` value 9, then the
+externally visible `tohost` store. These confirm deterministic executable
+completion only; they are not Spike or Sail differential results.
 
 For every event, the comparator requires matching M-mode privilege, PC,
 instruction bits, optional GPR write, and optional CSR write. It rejects trap,

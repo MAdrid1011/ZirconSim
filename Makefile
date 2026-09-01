@@ -20,6 +20,8 @@ DIFF_RV32M_ELF := $(BUILD_DIR)/rv32m-commit-prefix.elf
 DIFF_RV32M_TRACE := $(BUILD_DIR)/rv32m-commit-prefix.jsonl
 DIFF_RV32M_SPIKE_LOG := $(BUILD_DIR)/rv32m-commit-prefix.spike.log
 DIFF_RV32M_SAIL_LOG := $(BUILD_DIR)/rv32m-commit-prefix.sail.log
+RV32A_TOHOST_ELF := $(BUILD_DIR)/rv32a-tohost.elf
+RV32A_TOHOST_TRACE := $(BUILD_DIR)/rv32a-tohost.jsonl
 THROUGHPUT_ELF := $(BUILD_DIR)/sim-throughput.elf
 THROUGHPUT_TRACE := $(BUILD_DIR)/sim-throughput.jsonl
 THROUGHPUT_CYCLES ?= 100000
@@ -46,7 +48,7 @@ CORE_SCALA_SOURCES := $(shell find $(PARENT_DIR)/src/main/scala -type f -name '*
 CORE_BUILD_INPUTS := $(CORE_SCALA_SOURCES) $(PARENT_DIR)/build.sbt \
 	$(wildcard $(PARENT_DIR)/project/*.sbt) $(wildcard $(PARENT_DIR)/project/*.scala)
 
-.PHONY: all unit software verilog trace-verilog rtl trace-rtl smoke trace-smoke tohost tohost-rv32i-prefix tohost-rv32i-alu-branch tohost-rv32m throughput diff diff-prefix diff-alu-branch diff-rv32m diff-sail-rv32m micro-ipc-rv32m check-baseline-2024 baseline-ipc-rv32m clean
+.PHONY: all unit software verilog trace-verilog rtl trace-rtl smoke trace-smoke tohost tohost-rv32i-prefix tohost-rv32i-alu-branch tohost-rv32m tohost-rv32a throughput diff diff-prefix diff-alu-branch diff-rv32m diff-sail-rv32m micro-ipc-rv32m check-baseline-2024 baseline-ipc-rv32m clean
 
 all: unit
 
@@ -79,6 +81,12 @@ $(BUILD_DIR)/%.elf: tests/%.S tests/rv32i-commit-prefix.ld
 $(DIFF_RV32M_ELF): tests/rv32m-commit-prefix.S tests/rv32i-commit-prefix.ld
 	@mkdir -p $(BUILD_DIR)
 	clang --target=riscv32 -march=rv32im_zicsr_zifencei -mabi=ilp32 -nostdlib -fuse-ld=lld \
+		-Wl,-T,$(WORK_DIR)/tests/rv32i-commit-prefix.ld -Wl,--build-id=none \
+		-Wl,-e,_start -o $@ $<
+
+$(RV32A_TOHOST_ELF): tests/rv32a-tohost.S tests/rv32i-commit-prefix.ld
+	@mkdir -p $(BUILD_DIR)
+	clang --target=riscv32 -march=rv32ima_zicsr_zifencei -mabi=ilp32 -nostdlib -fuse-ld=lld \
 		-Wl,-T,$(WORK_DIR)/tests/rv32i-commit-prefix.ld -Wl,--build-id=none \
 		-Wl,-e,_start -o $@ $<
 
@@ -119,7 +127,7 @@ smoke: rtl software
 trace-smoke: trace-rtl software
 	$(TRACE_RTL_BINARY) --elf $(TEST_ELF) --retire-trace $(BUILD_DIR)/trace-smoke-retire.jsonl --seed 1 --max-cycles 10 --allow-timeout --wave
 
-tohost: tohost-rv32i-prefix tohost-rv32i-alu-branch tohost-rv32m
+tohost: tohost-rv32i-prefix tohost-rv32i-alu-branch tohost-rv32m tohost-rv32a
 
 tohost-rv32i-prefix: rtl $(DIFF_PREFIX_ELF)
 	$(RTL_BINARY) --elf $(DIFF_PREFIX_ELF) --retire-trace $(DIFF_PREFIX_TRACE) --seed 1 --max-cycles 1024
@@ -129,6 +137,9 @@ tohost-rv32i-alu-branch: rtl $(DIFF_ALU_BRANCH_ELF)
 
 tohost-rv32m: rtl $(DIFF_RV32M_ELF)
 	$(RTL_BINARY) --elf $(DIFF_RV32M_ELF) --retire-trace $(BUILD_DIR)/rv32m-tohost.jsonl --seed 1 --max-cycles 2048
+
+tohost-rv32a: rtl $(RV32A_TOHOST_ELF)
+	$(RTL_BINARY) --elf $(RV32A_TOHOST_ELF) --retire-trace $(RV32A_TOHOST_TRACE) --seed 1 --max-cycles 2048
 
 throughput: rtl $(THROUGHPUT_ELF)
 	$(RTL_BINARY) --elf $(THROUGHPUT_ELF) --retire-trace $(THROUGHPUT_TRACE) --seed 1 --max-cycles $(THROUGHPUT_CYCLES) --allow-timeout
