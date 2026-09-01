@@ -46,7 +46,7 @@ CORE_SCALA_SOURCES := $(shell find $(PARENT_DIR)/src/main/scala -type f -name '*
 CORE_BUILD_INPUTS := $(CORE_SCALA_SOURCES) $(PARENT_DIR)/build.sbt \
 	$(wildcard $(PARENT_DIR)/project/*.sbt) $(wildcard $(PARENT_DIR)/project/*.scala)
 
-.PHONY: all unit software verilog trace-verilog rtl trace-rtl smoke trace-smoke tohost-rv32m throughput diff diff-prefix diff-alu-branch diff-rv32m diff-sail-rv32m micro-ipc-rv32m check-baseline-2024 baseline-ipc-rv32m clean
+.PHONY: all unit software verilog trace-verilog rtl trace-rtl smoke trace-smoke tohost tohost-rv32i-prefix tohost-rv32i-alu-branch tohost-rv32m throughput diff diff-prefix diff-alu-branch diff-rv32m diff-sail-rv32m micro-ipc-rv32m check-baseline-2024 baseline-ipc-rv32m clean
 
 all: unit
 
@@ -119,6 +119,14 @@ smoke: rtl software
 trace-smoke: trace-rtl software
 	$(TRACE_RTL_BINARY) --elf $(TEST_ELF) --retire-trace $(BUILD_DIR)/trace-smoke-retire.jsonl --seed 1 --max-cycles 10 --allow-timeout --wave
 
+tohost: tohost-rv32i-prefix tohost-rv32i-alu-branch tohost-rv32m
+
+tohost-rv32i-prefix: rtl $(DIFF_PREFIX_ELF)
+	$(RTL_BINARY) --elf $(DIFF_PREFIX_ELF) --retire-trace $(DIFF_PREFIX_TRACE) --seed 1 --max-cycles 1024
+
+tohost-rv32i-alu-branch: rtl $(DIFF_ALU_BRANCH_ELF)
+	$(RTL_BINARY) --elf $(DIFF_ALU_BRANCH_ELF) --retire-trace $(DIFF_ALU_BRANCH_TRACE) --seed 1 --max-cycles 1024
+
 tohost-rv32m: rtl $(DIFF_RV32M_ELF)
 	$(RTL_BINARY) --elf $(DIFF_RV32M_ELF) --retire-trace $(BUILD_DIR)/rv32m-tohost.jsonl --seed 1 --max-cycles 2048
 
@@ -127,13 +135,11 @@ throughput: rtl $(THROUGHPUT_ELF)
 
 diff: diff-prefix diff-alu-branch diff-rv32m
 
-diff-prefix: rtl $(DIFF_BINARY) $(DIFF_PREFIX_ELF)
-	$(RTL_BINARY) --elf $(DIFF_PREFIX_ELF) --retire-trace $(DIFF_PREFIX_TRACE) --seed 1 --max-cycles 1024 --expect-retired 17
+diff-prefix: tohost-rv32i-prefix $(DIFF_BINARY)
 	$(SPIKE) --isa=RV32I_Zicsr_Zifencei --priv=m --pc=0x80000000 --instructions=17 --log-commits --log=$(DIFF_PREFIX_SPIKE_LOG) $(DIFF_PREFIX_ELF)
 	$(DIFF_BINARY) --zircon-trace $(DIFF_PREFIX_TRACE) --spike-log $(DIFF_PREFIX_SPIKE_LOG) --max-events 17
 
-diff-alu-branch: rtl $(DIFF_BINARY) $(DIFF_ALU_BRANCH_ELF)
-	$(RTL_BINARY) --elf $(DIFF_ALU_BRANCH_ELF) --retire-trace $(DIFF_ALU_BRANCH_TRACE) --seed 1 --max-cycles 1024 --expect-retired 32
+diff-alu-branch: tohost-rv32i-alu-branch $(DIFF_BINARY)
 	$(SPIKE) --isa=RV32I_Zicsr_Zifencei --priv=m --pc=0x80000000 --instructions=32 --log-commits --log=$(DIFF_ALU_BRANCH_SPIKE_LOG) $(DIFF_ALU_BRANCH_ELF)
 	$(DIFF_BINARY) --zircon-trace $(DIFF_ALU_BRANCH_TRACE) --spike-log $(DIFF_ALU_BRANCH_SPIKE_LOG) --max-events 32
 
