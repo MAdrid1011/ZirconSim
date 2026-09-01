@@ -59,9 +59,6 @@ Options parseOptions(int argc, char** argv) {
   if (options.memory_elf.empty() != options.backing_memory.empty()) {
     throw std::invalid_argument("--memory-elf and --backing-memory must be supplied together");
   }
-  if (!options.memory_elf.empty() && !options.sail_log.empty()) {
-    throw std::invalid_argument("committed-memory comparison requires a Spike commit log");
-  }
   return options;
 }
 
@@ -96,7 +93,8 @@ int main(int argc, char** argv) {
       const auto backing_memory = zircon::sim::parseBackingMemorySnapshot(backing_input);
       zircon::sim::compareCommittedMemory(zircon, reference, image.memory(), backing_memory);
       std::cout << "commit-memory-diff: " << options.max_events
-                << " ordered retirements and AXI backing memory matched against Spike" << std::endl;
+                << " ordered retirements and AXI backing memory matched against "
+                << (is_sail ? "Sail" : "Spike") << std::endl;
     }
     return 0;
   } catch (const std::exception& error) {

@@ -55,10 +55,10 @@ make diff SPIKE=/path/to/spike
 The command retains both program JSONL and Spike logs in `build/` as
 reproducible failure evidence.
 
-## Committed-Memory Spike Differential
+## Committed-Memory Differential
 
-The M3 extension uses the same locked Spike binary, but includes the trailing
-memory retirement and the runner's deterministic AXI backing-memory snapshot:
+The M3 extension includes the trailing memory retirement and the runner's
+deterministic AXI backing-memory snapshot. The locked Spike path is:
 
 ```bash
 make diff-memory-spike SPIKE=/path/to/locked/spike
@@ -80,12 +80,35 @@ writes must explicitly establish their external visibility before it can use
 this target; the comparator does not treat an unflushed cache line as matching
 backing memory.
 
-This command rejects traps, interrupts, floating state, unsupported memory
-encodings, and Sail logs. It is a bounded Spike M3 check, not a replacement for
-the required Sail memory adapter, random error injection, ACT4, or full
-memory-differential campaign. A passing local run must retain the ELF, JSONL,
-Spike log, backing-memory snapshot, seed, and source SHA before documentation
-may claim the result.
+This command rejects traps, interrupts, floating state, and unsupported memory
+encodings. It is a bounded Spike M3 check, not a replacement for random error
+injection, ACT4, or the full memory-differential campaign. A passing local run
+must retain the ELF, JSONL, Spike log, backing-memory snapshot, seed, and source
+SHA before documentation may claim the result.
+
+## Committed-Memory Sail Cross-Check
+
+The same bounded four-ELF corpus is independently compared with the locked
+Sail-RISC-V revision using its `--trace-mem` log:
+
+```bash
+make diff-memory-sail \
+  SAIL=/work/sail-riscv/build/c_emulator/sail_riscv_sim
+```
+
+The adapter accepts only Sail `R`, `W`, and `RW` data accesses following an
+instruction trace record. `X` records are instruction fetches and are ignored.
+It derives each RV32 load/store byte mask from the committed instruction rather
+than from the zero-extended printed value, records paired `RW` AMO accesses on
+the same word, and rejects orphan accesses, unsupported access types, invalid
+directions, duplicate reads/writes, or mismatched read/write addresses. The
+existing committed-memory comparator then verifies Zircon's retirement metadata
+and every touched word in the deterministic AXI backing-memory snapshot.
+
+This cross-check has the same explicit seed-1 and fixed retirement bounds as
+the Spike path. It remains directed evidence only: it does not establish
+exception/interrupt behavior, cache-global ordering, arbitrary load/store
+coverage, randomized AXI errors, ACT4, or the M3 release.
 
 ## RV32M Sail Cross-Check
 

@@ -62,6 +62,14 @@ ELFs, including the RV32A AMO/LR/SC trace. It requires an executable Spike at
 the locked parent SHA; successful compilation or parser unit tests alone are
 not differential evidence.
 
+`make diff-memory-sail SAIL=/path/to/sail_riscv_sim` runs the same four
+bounded completion ELFs against the locked Sail-RISC-V model with
+`--trace-mem`. It ignores Sail instruction-fetch (`X`) reads, derives
+load/store byte masks from each retiring RV32 instruction, maps `RW` AMO reads
+and writes to one retirement, and compares the final deterministic AXI
+backing-memory snapshot. This is directed M3 evidence, not full Sail, cache
+ordering, or random AXI validation.
+
 `make micro-ipc-rv32m` measures the M2 RV32M prefix through its 17th observed
 retirement. `make baseline-ipc-rv32m BASELINE_2024=/path/to/clean/Zircon-2024`
 runs the same prefix and deterministic AXI slave through the immutable 2024

@@ -116,6 +116,50 @@ int main(int argc, char** argv) {
   assert(sail_records[1].csr_write && sail_records[1].csr_address == 0x340);
   assert(sail_records[1].csr_data == 5);
 
+  std::istringstream sail_memory_log(
+      "mem[X,0x080000000] -> 0x00002083\n"
+      "[0] [M]: 0x80000000 (0x00002083) lw x1, 0x0(x0)\n"
+      "mem[R,0x080001000] -> 0x11223344\n"
+      "x1 <- 0x11223344\n"
+      "mem[X,0x080000004] -> 0x001000a3\n"
+      "[1] [M]: 0x80000004 (0x001000a3) sb x1, 0x1(x0)\n"
+      "mem[W,0x080001001] <- 0xAB\n"
+      "mem[X,0x080000008] -> 0x0000202f\n"
+      "[2] [M]: 0x80000008 (0x0000202f) amoadd.w x0, x0, (x0)\n"
+      "mem[RW,0x080001000] -> 0x1122ab44\n"
+      "mem[RW,0x080001000] <- 0xcafebabe\n");
+  const auto sail_memory_records = zircon::sim::parseSailCommitLog(sail_memory_log, 3);
+  assert(sail_memory_records[0].memory.address == 0x80001000u);
+  assert(sail_memory_records[0].memory.read_mask == 0xf);
+  assert(sail_memory_records[0].memory.read_data == 0x11223344u);
+  assert(sail_memory_records[1].memory.address == 0x80001001u);
+  assert(sail_memory_records[1].memory.write_mask == 0x2);
+  assert(sail_memory_records[1].memory.write_data == 0x0000ab00u);
+  assert(sail_memory_records[2].memory.read_mask == 0xf);
+  assert(sail_memory_records[2].memory.write_mask == 0xf);
+  assert(sail_memory_records[2].memory.write_data == 0xcafebabeu);
+
+  std::istringstream orphan_sail_memory(
+      "mem[W,0x080001000] <- 0x00000001\n");
+  bool rejected_orphan_sail_memory = false;
+  try {
+    static_cast<void>(zircon::sim::parseSailCommitLog(orphan_sail_memory, 1));
+  } catch (const std::runtime_error&) {
+    rejected_orphan_sail_memory = true;
+  }
+  assert(rejected_orphan_sail_memory);
+
+  std::istringstream invalid_sail_memory(
+      "[0] [M]: 0x80000000 (0x00002083) lw x1, 0x0(x0)\n"
+      "mem[R,0x080001000] <- 0x11223344\n");
+  bool rejected_invalid_sail_memory = false;
+  try {
+    static_cast<void>(zircon::sim::parseSailCommitLog(invalid_sail_memory, 1));
+  } catch (const std::runtime_error&) {
+    rejected_invalid_sail_memory = true;
+  }
+  assert(rejected_invalid_sail_memory);
+
   std::istringstream zircon_memory_trace(
       "{\"order\":0,\"pc\":2147483648,\"instruction\":8323,\"privilege\":3,\"gprWrite\":true,\"gprAddress\":1,\"gprData\":287454020,\"fprWrite\":false,\"csrWrite\":false,\"csrAddress\":0,\"csrData\":0,\"memoryAddress\":2147487744,\"memoryReadMask\":15,\"memoryWriteMask\":0,\"memoryReadData\":287454020,\"memoryWriteData\":0,\"trap\":false,\"interrupt\":false}\n"
       "{\"order\":1,\"pc\":2147483652,\"instruction\":1048739,\"privilege\":3,\"gprWrite\":false,\"gprAddress\":0,\"gprData\":0,\"fprWrite\":false,\"csrWrite\":false,\"csrAddress\":0,\"csrData\":0,\"memoryAddress\":2147487745,\"memoryReadMask\":0,\"memoryWriteMask\":2,\"memoryReadData\":0,\"memoryWriteData\":43776,\"trap\":false,\"interrupt\":false}\n"

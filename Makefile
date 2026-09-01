@@ -20,6 +20,10 @@ DIFF_RV32M_ELF := $(BUILD_DIR)/rv32m-commit-prefix.elf
 DIFF_RV32M_TRACE := $(BUILD_DIR)/rv32m-commit-prefix.jsonl
 DIFF_RV32M_SPIKE_LOG := $(BUILD_DIR)/rv32m-commit-prefix.spike.log
 DIFF_RV32M_SAIL_LOG := $(BUILD_DIR)/rv32m-commit-prefix.sail.log
+DIFF_PREFIX_SAIL_MEMORY_LOG := $(BUILD_DIR)/rv32i-commit-prefix.sail-memory.log
+DIFF_ALU_BRANCH_SAIL_MEMORY_LOG := $(BUILD_DIR)/rv32i-alu-branch-prefix.sail-memory.log
+DIFF_RV32M_SAIL_MEMORY_LOG := $(BUILD_DIR)/rv32m-commit-prefix.sail-memory.log
+RV32A_TOHOST_SAIL_MEMORY_LOG := $(BUILD_DIR)/rv32a-tohost.sail-memory.log
 RV32A_TOHOST_ELF := $(BUILD_DIR)/rv32a-tohost.elf
 RV32A_TOHOST_TRACE := $(BUILD_DIR)/rv32a-tohost.jsonl
 DIFF_PREFIX_BACKING := $(BUILD_DIR)/rv32i-commit-prefix.backing-memory
@@ -53,7 +57,7 @@ CORE_SCALA_SOURCES := $(shell find $(PARENT_DIR)/src/main/scala -type f -name '*
 CORE_BUILD_INPUTS := $(CORE_SCALA_SOURCES) $(PARENT_DIR)/build.sbt \
 	$(wildcard $(PARENT_DIR)/project/*.sbt) $(wildcard $(PARENT_DIR)/project/*.scala)
 
-.PHONY: all unit software verilog trace-verilog rtl trace-rtl smoke trace-smoke tohost tohost-rv32i-prefix tohost-rv32i-alu-branch tohost-rv32m tohost-rv32a throughput diff diff-prefix diff-alu-branch diff-rv32m diff-sail-rv32m diff-memory-spike diff-memory-rv32i-prefix diff-memory-rv32i-alu-branch diff-memory-rv32m diff-memory-rv32a micro-ipc-rv32m check-baseline-2024 baseline-ipc-rv32m clean
+.PHONY: all unit software verilog trace-verilog rtl trace-rtl smoke trace-smoke tohost tohost-rv32i-prefix tohost-rv32i-alu-branch tohost-rv32m tohost-rv32a throughput diff diff-prefix diff-alu-branch diff-rv32m diff-sail-rv32m diff-memory-spike diff-memory-rv32i-prefix diff-memory-rv32i-alu-branch diff-memory-rv32m diff-memory-rv32a diff-memory-sail diff-memory-sail-rv32i-prefix diff-memory-sail-rv32i-alu-branch diff-memory-sail-rv32m diff-memory-sail-rv32a micro-ipc-rv32m check-baseline-2024 baseline-ipc-rv32m clean
 
 all: unit
 
@@ -187,6 +191,25 @@ diff-memory-rv32m: tohost-rv32m $(DIFF_BINARY)
 diff-memory-rv32a: tohost-rv32a $(DIFF_BINARY)
 	$(SPIKE) --isa=RV32IMA_Zicsr_Zifencei --priv=m --pc=0x80000000 --instructions=12 --log-commits --log=$(RV32A_TOHOST_SPIKE_LOG) $(RV32A_TOHOST_ELF)
 	$(DIFF_BINARY) --zircon-trace $(RV32A_TOHOST_TRACE) --spike-log $(RV32A_TOHOST_SPIKE_LOG) --memory-elf $(RV32A_TOHOST_ELF) --backing-memory $(RV32A_TOHOST_BACKING) --max-events 12
+
+diff-memory-sail: diff-memory-sail-rv32i-prefix diff-memory-sail-rv32i-alu-branch diff-memory-sail-rv32m diff-memory-sail-rv32a
+
+diff-memory-sail-rv32i-prefix: tohost-rv32i-prefix $(DIFF_BINARY)
+	$(SAIL) --rv32 --inst-limit 19 --trace-output $(DIFF_PREFIX_SAIL_MEMORY_LOG) --trace-instr --trace-gpr --trace-csr --trace-mem $(DIFF_PREFIX_ELF)
+	$(DIFF_BINARY) --zircon-trace $(DIFF_PREFIX_TRACE) --sail-log $(DIFF_PREFIX_SAIL_MEMORY_LOG) --memory-elf $(DIFF_PREFIX_ELF) --backing-memory $(DIFF_PREFIX_BACKING) --max-events 19
+
+diff-memory-sail-rv32i-alu-branch: tohost-rv32i-alu-branch $(DIFF_BINARY)
+	$(SAIL) --rv32 --inst-limit 34 --trace-output $(DIFF_ALU_BRANCH_SAIL_MEMORY_LOG) --trace-instr --trace-gpr --trace-csr --trace-mem $(DIFF_ALU_BRANCH_ELF)
+	$(DIFF_BINARY) --zircon-trace $(DIFF_ALU_BRANCH_TRACE) --sail-log $(DIFF_ALU_BRANCH_SAIL_MEMORY_LOG) --memory-elf $(DIFF_ALU_BRANCH_ELF) --backing-memory $(DIFF_ALU_BRANCH_BACKING) --max-events 34
+
+diff-memory-sail-rv32m: tohost-rv32m $(DIFF_BINARY)
+	cp $(BUILD_DIR)/rv32m-tohost.jsonl $(DIFF_RV32M_TRACE)
+	$(SAIL) --rv32 --inst-limit 19 --trace-output $(DIFF_RV32M_SAIL_MEMORY_LOG) --trace-instr --trace-gpr --trace-csr --trace-mem $(DIFF_RV32M_ELF)
+	$(DIFF_BINARY) --zircon-trace $(DIFF_RV32M_TRACE) --sail-log $(DIFF_RV32M_SAIL_MEMORY_LOG) --memory-elf $(DIFF_RV32M_ELF) --backing-memory $(DIFF_RV32M_BACKING) --max-events 19
+
+diff-memory-sail-rv32a: tohost-rv32a $(DIFF_BINARY)
+	$(SAIL) --rv32 --inst-limit 12 --trace-output $(RV32A_TOHOST_SAIL_MEMORY_LOG) --trace-instr --trace-gpr --trace-csr --trace-mem $(RV32A_TOHOST_ELF)
+	$(DIFF_BINARY) --zircon-trace $(RV32A_TOHOST_TRACE) --sail-log $(RV32A_TOHOST_SAIL_MEMORY_LOG) --memory-elf $(RV32A_TOHOST_ELF) --backing-memory $(RV32A_TOHOST_BACKING) --max-events 12
 
 micro-ipc-rv32m: rtl $(DIFF_RV32M_ELF)
 	$(RTL_BINARY) --elf $(DIFF_RV32M_ELF) --retire-trace $(BUILD_DIR)/rv32m-ipc-prefix.jsonl --seed 1 --max-cycles 2048 --expect-retired 17 --stop-after-retired 17

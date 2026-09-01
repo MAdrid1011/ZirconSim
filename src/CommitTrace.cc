@@ -133,6 +133,67 @@ uint8_t loadBytes(uint32_t instruction) {
   throw std::runtime_error("Spike commit log has a load with an unsupported RV32 encoding");
 }
 
+uint8_t storeBytes(uint32_t instruction) {
+  const uint8_t opcode = static_cast<uint8_t>(instruction & 0x7fu);
+  const uint8_t funct3 = static_cast<uint8_t>((instruction >> 12u) & 0x7u);
+  if (opcode == 0x23u) {
+    switch (funct3) {
+      case 0x0u:
+        return 1;
+      case 0x1u:
+        return 2;
+      case 0x2u:
+        return 4;
+      default:
+        break;
+    }
+  }
+  if (opcode == 0x2fu && funct3 == 0x2u) {
+    return 4;
+  }
+  throw std::runtime_error("Sail commit log has a store with an unsupported RV32 encoding");
+}
+
+void setMemoryAddress(CommitMemoryRecord& memory, uint32_t address, const char* name) {
+  if (memory.active() && memory.address != address) {
+    throw std::runtime_error(std::string(name) + " read and write addresses differ");
+  }
+  memory.address = address;
+}
+
+void parseSailMemory(const std::smatch& match, CommitRecord& record) {
+  const std::string type = match[1].str();
+  const std::string direction = match[3].str();
+  if (type == "X") return;
+  if (type != "R" && type != "W" && type != "RW") {
+    throw std::runtime_error("Sail memory trace has an unsupported access type");
+  }
+  if ((type == "R" && direction != "->") || (type == "W" && direction != "<-")) {
+    throw std::runtime_error("Sail memory trace has an invalid access direction");
+  }
+
+  const uint32_t address = hexadecimal32(match[2].str(), "Sail memory address");
+  const uint32_t data = hexadecimal32(match[4].str(), "Sail memory data");
+  if (direction == "->") {
+    if (record.memory.read_mask != 0) {
+      throw std::runtime_error("Sail instruction has multiple memory reads");
+    }
+    setMemoryAddress(record.memory, address, "Sail memory");
+    record.memory.read_mask = accessMask(address, loadBytes(record.instruction),
+                                         "Sail memory read");
+    record.memory.read_data = data << ((address & 3u) * 8u);
+    return;
+  }
+
+  if (record.memory.write_mask != 0) {
+    throw std::runtime_error("Sail instruction has multiple memory writes");
+  }
+  setMemoryAddress(record.memory, address, "Sail memory");
+  record.memory.write_mask = accessMask(address, storeBytes(record.instruction),
+                                        "Sail memory write");
+  record.memory.write_data = data << ((address & 3u) * 8u);
+}
+
 void parseSpikeMemory(const std::string& effects, CommitRecord& record) {
   const std::regex memory(R"(\smem\s+0x([0-9a-fA-F]+)(?:\s+0x([0-9a-fA-F]+))?)");
   for (std::sregex_iterator current(effects.begin(), effects.end(), memory), end;
@@ -257,6 +318,8 @@ std::vector<CommitRecord> parseSailCommitLog(std::istream& input, size_t max_rec
       R"(^\[([0-9]+)\] \[([MSU])\]: 0x([0-9a-fA-F]+) \(0x([0-9a-fA-F]+)\).*$)");
   const std::regex gpr(R"(^x([0-9]+) <- 0x([0-9a-fA-F]+)$)");
   const std::regex csr(R"(^CSR .+ \(0x([0-9a-fA-F]+)\) <- 0x([0-9a-fA-F]+)$)");
+  const std::regex memory(
+      R"(^mem\[([A-Za-z]+),0x([0-9a-fA-F]+)\] (->|<-) 0x([0-9a-fA-F]+)$)");
 
   std::vector<CommitRecord> records;
   CommitRecord current;
@@ -284,6 +347,11 @@ std::vector<CommitRecord> parseSailCommitLog(std::istream& input, size_t max_rec
       current.pc = static_cast<uint32_t>(hexadecimal(match[3].str(), "Sail PC"));
       current.instruction = static_cast<uint32_t>(hexadecimal(match[4].str(), "Sail instruction"));
       have_current = true;
+    } else if (std::regex_match(line, match, memory)) {
+      if (match[1].str() != "X" && !have_current) {
+        throw std::runtime_error("Sail data memory access has no retiring instruction");
+      }
+      if (have_current) parseSailMemory(match, current);
     } else if (have_current && std::regex_match(line, match, gpr)) {
       if (current.gpr_write) {
         throw std::runtime_error("Sail instruction has multiple GPR writes");
