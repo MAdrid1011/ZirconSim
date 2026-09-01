@@ -238,4 +238,13 @@ std::optional<int> TestExitMonitor::observeWrite(uint32_t address, uint32_t data
                       : std::optional<int>(static_cast<int>(value_ >> 1));
 }
 
+std::optional<int> TestExitMonitor::observeBackingMemory(const SparseMemory& memory) const {
+  const uint32_t value = memory.read32(tohost_address_ & ~uint32_t{3});
+  if ((value & 1u) == 0 || value == 0) {
+    return std::nullopt;
+  }
+  return value == 1u ? std::optional<int>(0)
+                     : std::optional<int>(static_cast<int>(value >> 1));
+}
+
 }  // namespace zircon::sim

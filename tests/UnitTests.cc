@@ -44,6 +44,13 @@ int main(int argc, char** argv) {
   zircon::sim::TestExitMonitor failure_monitor(*tohost);
   assert(failure_monitor.observeWrite(*tohost, 7, 0xf).value() == 3);
 
+  zircon::sim::SparseMemory backing_memory;
+  zircon::sim::TestExitMonitor backing_monitor(*tohost);
+  backing_memory.write32(*tohost, 0, 0xf);
+  assert(!backing_monitor.observeBackingMemory(backing_memory).has_value());
+  backing_memory.write32(*tohost, 1, 0xf);
+  assert(backing_monitor.observeBackingMemory(backing_memory).value() == 0);
+
   zircon::sim::SparseMemory memory;
   memory.write32(0x80000000u, 0x00500093u);
   zircon::sim::DeterministicAxiMemory axi(memory, 7);
@@ -108,6 +115,6 @@ int main(int argc, char** argv) {
   assert(sail_records[1].csr_write && sail_records[1].csr_address == 0x340);
   assert(sail_records[1].csr_data == 5);
 
-  std::cout << "unit-tests: deterministic RNG, ELF32, AXI, symbols, tohost, and commit trace parsers passed" << std::endl;
+  std::cout << "unit-tests: deterministic RNG, ELF32, AXI, symbols, tohost backing memory, and commit trace parsers passed" << std::endl;
   return 0;
 }

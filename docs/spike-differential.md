@@ -15,14 +15,17 @@ freestanding `RV32I_Zicsr_Zifencei` ELFs at `0x80000000`:
 
 Each prefix ends in a `tohost` store. The prefix comparator deliberately stops
 before that memory event, while the runner must subsequently retire the store
-before it may report ELF completion. An accepted AXI W beat or an unretired
-store must not pass the gate.
+and observe its matching value in deterministic AXI backing memory before it
+may report ELF completion. An accepted AXI W beat, an unretired store, or a
+retire event without the backing-memory observation must not pass the gate.
 
 Each RTL runner receives explicit nonzero AXI seed 1, a prefix-specific
-`--expect-retired` count, and a fixed cycle limit. The runner returns only when
-the exact `tohost` store is in the ordered retire trace. Spike uses the same
-prefix-specific `--instructions` count, so each reference log is bounded by
-architectural retirement rather than host elapsed time.
+`--expect-retired` count, and a fixed cycle limit. The runner drives the ELF
+symbol address through trace-only host flush and returns only after the exact
+`tohost` store is in the ordered retire trace and the backing-memory value
+matches it. Spike uses the same prefix-specific `--instructions` count, so each
+reference log is bounded by architectural retirement rather than host elapsed
+time.
 
 For every event, the comparator requires matching M-mode privilege, PC,
 instruction bits, optional GPR write, and optional CSR write. It rejects trap,

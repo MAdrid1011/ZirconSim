@@ -24,9 +24,12 @@ smoke result, never an ELF pass result.
 The runner requires explicit `--elf`, `--retire-trace`, and non-zero `--seed`.
 Its AXI model loads ELF `PT_LOAD` data, drives legal deterministic backpressure,
 holds each R/B response until handshake, tracks IDs/beats/last, and observes
-`tohost` writes. It returns success only after a normal `RetireEvent` records
-the matching store and `tohost = 1`; an accepted AXI W beat alone is not an ELF
-pass. `make tohost-rv32m` runs the explicit seed-1 M3 store completion smoke.
+`tohost` writes. It resolves the ELF address into the trace-only host-flush
+input, then returns success only after a normal `RetireEvent` records the
+matching store and the deterministic AXI backing memory contains the same
+nonzero `tohost` value. An accepted AXI W beat or a retire event alone is not
+an ELF pass. `make tohost-rv32m` runs the explicit seed-1 M3 store completion
+smoke.
 
 The old handwritten partial RV32IM interpreter remains in branch history and
 is not a reference model. Commit-level comparison uses Spike, with the locked

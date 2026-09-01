@@ -128,7 +128,8 @@ zircon::sim::AxiMasterSignals captureMaster(const VZirconCore& dut) {
   };
 }
 
-void driveSlave(VZirconCore& dut, const zircon::sim::AxiSlaveSignals& slave) {
+void driveSlave(VZirconCore& dut, const zircon::sim::AxiSlaveSignals& slave,
+                uint32_t tohost_address) {
   dut.io_axi_aw_ready = slave.aw_ready;
   dut.io_axi_w_ready = slave.w_ready;
   dut.io_axi_b_valid = slave.b_valid;
@@ -143,6 +144,8 @@ void driveSlave(VZirconCore& dut, const zircon::sim::AxiSlaveSignals& slave) {
   dut.io_interrupts_meip = 0;
   dut.io_interrupts_msip = 0;
   dut.io_interrupts_mtip = 0;
+  dut.io_hostFlush_enable = 1;
+  dut.io_hostFlush_address = tohost_address;
 }
 
 void emitTrace(std::ostream& stream, const RetireEvent& event, uint64_t& expected_order) {
@@ -244,6 +247,7 @@ int main(int argc, char** argv) {
 
     zircon::sim::DeterministicAxiMemory memory(image.memory(), options.seed);
     zircon::sim::TestExitMonitor retired_exit(*tohost);
+    zircon::sim::TestExitMonitor backing_exit(*tohost);
     Verilated::commandArgs(argc, argv);
     VZirconCore dut;
 #if defined(ZIRCON_SIM_TRACE)
@@ -259,7 +263,7 @@ int main(int argc, char** argv) {
     }
 #endif
 
-    driveSlave(dut, {});
+    driveSlave(dut, {}, *tohost);
     dut.reset = 1;
     for (int reset_cycle = 0; reset_cycle < 2; ++reset_cycle) {
       dut.clock = 0;
@@ -274,12 +278,13 @@ int main(int argc, char** argv) {
 #endif
     }
     dut.reset = 0;
+    std::optional<int> retired_exit_status;
 
     for (uint64_t cycle = 0; cycle < options.max_cycles; ++cycle) {
       dut.clock = 0;
       dut.eval();
       const auto slave = memory.drive();
-      driveSlave(dut, slave);
+      driveSlave(dut, slave, *tohost);
       dut.eval();
 #if defined(ZIRCON_SIM_TRACE)
       if (options.wave) wave.dump(simulation_time++);
@@ -288,8 +293,9 @@ int main(int argc, char** argv) {
       const RetireEvent second_retired = lane1(dut);
       emitTrace(trace_stream, first_retired, expected_order);
       emitTrace(trace_stream, second_retired, expected_order);
-      std::optional<int> retired_exit_status = observeRetiredTohost(retired_exit,
-        first_retired);
+      if (!retired_exit_status.has_value()) {
+        retired_exit_status = observeRetiredTohost(retired_exit, first_retired);
+      }
       if (!retired_exit_status.has_value()) {
         retired_exit_status = observeRetiredTohost(retired_exit, second_retired);
       }
@@ -312,11 +318,18 @@ int main(int argc, char** argv) {
 #endif
       memory.advance(master, slave);
       if (retired_exit_status.has_value()) {
+        const auto backing_exit_status = backing_exit.observeBackingMemory(memory.memory());
+        if (!backing_exit_status.has_value()) {
+          continue;
+        }
+        if (*backing_exit_status != *retired_exit_status) {
+          throw std::runtime_error("retired tohost value disagrees with AXI backing memory");
+        }
         dut.final();
 #if defined(ZIRCON_SIM_TRACE)
         if (options.wave) wave.close();
 #endif
-        const int status = *retired_exit_status;
+        const int status = *backing_exit_status;
         std::cout << "{\"status\":\"tohost\",\"cycles\":" << cycle + 1
                   << ",\"seed\":" << options.seed << ",\"entry\":" << image.entry()
                   << ",\"tohost\":" << *tohost << ",\"exit\":" << status

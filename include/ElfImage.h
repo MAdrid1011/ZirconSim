@@ -43,6 +43,7 @@ class TestExitMonitor {
   explicit TestExitMonitor(uint32_t tohost_address) : tohost_address_(tohost_address) {}
 
   std::optional<int> observeWrite(uint32_t address, uint32_t data, uint8_t strobe);
+  std::optional<int> observeBackingMemory(const SparseMemory& memory) const;
 
  private:
   uint32_t tohost_address_;
