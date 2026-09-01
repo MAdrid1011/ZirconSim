@@ -6,6 +6,8 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <utility>
+#include <vector>
 
 namespace zircon::sim {
 
@@ -16,6 +18,7 @@ class SparseMemory {
   void write8(uint32_t address, uint8_t value);
   void write32(uint32_t address, uint32_t value, uint8_t strobe = 0xf);
   void load(uint32_t address, const uint8_t* data, size_t size);
+  std::vector<std::pair<uint32_t, uint8_t>> snapshot() const;
 
  private:
   std::unordered_map<uint32_t, uint8_t> bytes_;

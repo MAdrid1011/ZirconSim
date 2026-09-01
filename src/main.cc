@@ -24,6 +24,7 @@ struct Options {
   uint64_t max_cycles = 1000000;
   uint64_t expect_retired = 0;
   uint64_t stop_after_retired = 0;
+  std::string backing_memory;
   bool allow_timeout = false;
   bool wave = false;
 };
@@ -68,7 +69,7 @@ Options parseOptions(int argc, char** argv) {
   Options options;
   for (int index = 1; index < argc; ++index) {
     const std::string argument = argv[index];
-    if ((argument == "--elf" || argument == "--retire-trace" ||
+    if ((argument == "--elf" || argument == "--retire-trace" || argument == "--backing-memory" ||
          argument == "--seed" || argument == "--max-cycles" ||
          argument == "--expect-retired" || argument == "--stop-after-retired") &&
         index + 1 >= argc) {
@@ -78,6 +79,8 @@ Options parseOptions(int argc, char** argv) {
       options.elf = argv[++index];
     } else if (argument == "--retire-trace") {
       options.retire_trace = argv[++index];
+    } else if (argument == "--backing-memory") {
+      options.backing_memory = argv[++index];
     } else if (argument == "--seed") {
       options.seed = parseUnsigned(argv[++index], "--seed");
     } else if (argument == "--max-cycles") {
@@ -177,6 +180,18 @@ void emitTrace(std::ostream& stream, const RetireEvent& event, uint64_t& expecte
          << ",\"cause\":" << event.cause
          << ",\"trapValue\":" << event.trap_value
          << ",\"fflags\":" << static_cast<unsigned>(event.fflags) << "}\n";
+}
+
+void writeBackingMemorySnapshot(const zircon::sim::SparseMemory& memory,
+                                const std::string& path) {
+  if (path.empty()) return;
+  std::ofstream stream(path);
+  if (!stream) throw std::runtime_error("cannot create backing-memory snapshot: " + path);
+  stream << std::hex << std::setfill('0');
+  for (const auto& [address, value] : memory.snapshot()) {
+    stream << std::setw(8) << address << " " << std::setw(2)
+           << static_cast<unsigned>(value) << "\n";
+  }
 }
 
 std::optional<int> observeRetiredTohost(zircon::sim::TestExitMonitor& monitor,
@@ -304,6 +319,7 @@ int main(int argc, char** argv) {
 #if defined(ZIRCON_SIM_TRACE)
         if (options.wave) wave.close();
 #endif
+        writeBackingMemorySnapshot(memory.memory(), options.backing_memory);
         std::cout << "{\"status\":\"retire-limit\",\"cycles\":" << cycle + 1
                   << ",\"seed\":" << options.seed << ",\"entry\":" << image.entry()
                   << ",\"retired\":" << expected_order << "}" << std::endl;
@@ -329,6 +345,7 @@ int main(int argc, char** argv) {
 #if defined(ZIRCON_SIM_TRACE)
         if (options.wave) wave.close();
 #endif
+        writeBackingMemorySnapshot(memory.memory(), options.backing_memory);
         const int status = *backing_exit_status;
         std::cout << "{\"status\":\"tohost\",\"cycles\":" << cycle + 1
                   << ",\"seed\":" << options.seed << ",\"entry\":" << image.entry()
@@ -342,6 +359,7 @@ int main(int argc, char** argv) {
 #if defined(ZIRCON_SIM_TRACE)
     if (options.wave) wave.close();
 #endif
+    writeBackingMemorySnapshot(memory.memory(), options.backing_memory);
     if (expected_order < options.expect_retired) {
       std::cerr << "zircon-sim: retired " << expected_order << " events, expected at least "
                 << options.expect_retired << std::endl;

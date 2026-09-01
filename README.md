@@ -53,6 +53,15 @@ integer retirement only, not an ELF pass, full Sail suite, or M3 memory
 differential. The reproducible model build and comparison command are recorded
 in [`docs/spike-differential.md`](docs/spike-differential.md).
 
+`make diff-memory-spike SPIKE=/path/to/locked/spike` extends the bounded Spike
+comparison through the retired `tohost` store. It compares committed memory
+address, byte masks, and read/write data against the Spike commit log, then
+compares every touched word against ZirconSim's final AXI backing-memory
+snapshot. The target covers the existing RV32I, RV32M, and RV32A completion
+ELFs, including the RV32A AMO/LR/SC trace. It requires an executable Spike at
+the locked parent SHA; successful compilation or parser unit tests alone are
+not differential evidence.
+
 `make micro-ipc-rv32m` measures the M2 RV32M prefix through its 17th observed
 retirement. `make baseline-ipc-rv32m BASELINE_2024=/path/to/clean/Zircon-2024`
 runs the same prefix and deterministic AXI slave through the immutable 2024

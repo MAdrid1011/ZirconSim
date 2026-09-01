@@ -132,6 +132,13 @@ void SparseMemory::load(uint32_t address, const uint8_t* data, size_t size) {
   }
 }
 
+std::vector<std::pair<uint32_t, uint8_t>> SparseMemory::snapshot() const {
+  std::vector<std::pair<uint32_t, uint8_t>> result(bytes_.begin(), bytes_.end());
+  std::sort(result.begin(), result.end(),
+            [](const auto& left, const auto& right) { return left.first < right.first; });
+  return result;
+}
+
 ElfImage ElfImage::load(const std::string& path, uint32_t raw_base) {
   std::ifstream stream(path, std::ios::binary);
   if (!stream) {

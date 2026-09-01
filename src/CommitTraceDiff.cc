@@ -12,6 +12,8 @@ struct Options {
   std::string zircon_trace;
   std::string spike_log;
   std::string sail_log;
+  std::string memory_elf;
+  std::string backing_memory;
   size_t max_events = 0;
 };
 
@@ -29,7 +31,8 @@ Options parseOptions(int argc, char** argv) {
   for (int index = 1; index < argc; ++index) {
     const std::string argument = argv[index];
     if ((argument == "--zircon-trace" || argument == "--spike-log" ||
-         argument == "--sail-log" ||
+         argument == "--sail-log" || argument == "--memory-elf" ||
+         argument == "--backing-memory" ||
          argument == "--max-events") && index + 1 >= argc) {
       throw std::invalid_argument("missing value for " + argument);
     }
@@ -39,6 +42,10 @@ Options parseOptions(int argc, char** argv) {
       options.spike_log = argv[++index];
     } else if (argument == "--sail-log") {
       options.sail_log = argv[++index];
+    } else if (argument == "--memory-elf") {
+      options.memory_elf = argv[++index];
+    } else if (argument == "--backing-memory") {
+      options.backing_memory = argv[++index];
     } else if (argument == "--max-events") {
       options.max_events = parseCount(argv[++index]);
     } else {
@@ -48,6 +55,12 @@ Options parseOptions(int argc, char** argv) {
   if (options.zircon_trace.empty() || options.max_events == 0 ||
       (options.spike_log.empty() == options.sail_log.empty())) {
     throw std::invalid_argument("--zircon-trace, exactly one reference log, and --max-events are required");
+  }
+  if (options.memory_elf.empty() != options.backing_memory.empty()) {
+    throw std::invalid_argument("--memory-elf and --backing-memory must be supplied together");
+  }
+  if (!options.memory_elf.empty() && !options.sail_log.empty()) {
+    throw std::invalid_argument("committed-memory comparison requires a Spike commit log");
   }
   return options;
 }
@@ -70,9 +83,21 @@ int main(int argc, char** argv) {
     if (zircon.size() != options.max_events || reference.size() != options.max_events) {
       throw std::runtime_error("commit trace is shorter than --max-events");
     }
-    zircon::sim::compareCommitPrefixes(zircon, reference);
-    std::cout << "commit-diff: " << options.max_events << " ordered retirements matched against "
-              << (is_sail ? "Sail" : "Spike") << std::endl;
+    if (options.memory_elf.empty()) {
+      zircon::sim::compareCommitPrefixes(zircon, reference);
+      std::cout << "commit-diff: " << options.max_events << " ordered retirements matched against "
+                << (is_sail ? "Sail" : "Spike") << std::endl;
+    } else {
+      std::ifstream backing_input(options.backing_memory);
+      if (!backing_input) {
+        throw std::runtime_error("cannot open backing-memory snapshot");
+      }
+      const auto image = zircon::sim::ElfImage::load(options.memory_elf);
+      const auto backing_memory = zircon::sim::parseBackingMemorySnapshot(backing_input);
+      zircon::sim::compareCommittedMemory(zircon, reference, image.memory(), backing_memory);
+      std::cout << "commit-memory-diff: " << options.max_events
+                << " ordered retirements and AXI backing memory matched against Spike" << std::endl;
+    }
     return 0;
   } catch (const std::exception& error) {
     std::cerr << "commit-diff: " << error.what() << std::endl;

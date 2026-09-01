@@ -33,9 +33,9 @@ Without a local Spike binary, run the deterministic completion layer alone:
 make tohost
 ```
 
-The current seed-1 evidence is 233 cycles / 19 retirements for the RV32I CSR
-prefix, 330 / 34 for the RV32I ALU/branch prefix, 275 / 19 for the RV32M
-prefix, and 219 / 12 for the RV32A smoke. The RV32A trace records `amoadd.w`
+The current seed-1 evidence is 241 cycles / 19 retirements for the RV32I CSR
+prefix, 292 / 34 for the RV32I ALU/branch prefix, 274 / 19 for the RV32M
+prefix, and 228 / 12 for the RV32A smoke. The RV32A trace records `amoadd.w`
 old-value 7/new-value 12, `lr.w` value 12, successful `sc.w` value 9, then the
 externally visible `tohost` store. These confirm deterministic executable
 completion only; they are not Spike or Sail differential results.
@@ -54,6 +54,38 @@ make diff SPIKE=/path/to/spike
 
 The command retains both program JSONL and Spike logs in `build/` as
 reproducible failure evidence.
+
+## Committed-Memory Spike Differential
+
+The M3 extension uses the same locked Spike binary, but includes the trailing
+memory retirement and the runner's deterministic AXI backing-memory snapshot:
+
+```bash
+make diff-memory-spike SPIKE=/path/to/locked/spike
+```
+
+For each of the two RV32I, RV32M, and RV32A ELFs, the target supplies the ELF
+initial image to `CommitTraceDiff`. Spike's `--log-commits` format provides a
+load address and a store address/value/width for each committed instruction.
+The comparator derives byte masks from the logged access and RV32 instruction
+encoding, reconstructs reference load words and stores in program order, then
+requires matching `RetireEvent` address, read/write mask, read data, and write
+data. It finally compares every touched word with ZirconSim's sorted
+backing-memory snapshot.
+
+The current programs make each compared write externally visible: `tohost` is
+released only after the trace-only host flush completes its ID-5 writeback, and
+the RV32A test's atomic word uses ID 7. A program with ordinary dirty cache
+writes must explicitly establish their external visibility before it can use
+this target; the comparator does not treat an unflushed cache line as matching
+backing memory.
+
+This command rejects traps, interrupts, floating state, unsupported memory
+encodings, and Sail logs. It is a bounded Spike M3 check, not a replacement for
+the required Sail memory adapter, random error injection, ACT4, or full
+memory-differential campaign. A passing local run must retain the ELF, JSONL,
+Spike log, backing-memory snapshot, seed, and source SHA before documentation
+may claim the result.
 
 ## RV32M Sail Cross-Check
 

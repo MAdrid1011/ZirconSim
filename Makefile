@@ -22,6 +22,11 @@ DIFF_RV32M_SPIKE_LOG := $(BUILD_DIR)/rv32m-commit-prefix.spike.log
 DIFF_RV32M_SAIL_LOG := $(BUILD_DIR)/rv32m-commit-prefix.sail.log
 RV32A_TOHOST_ELF := $(BUILD_DIR)/rv32a-tohost.elf
 RV32A_TOHOST_TRACE := $(BUILD_DIR)/rv32a-tohost.jsonl
+DIFF_PREFIX_BACKING := $(BUILD_DIR)/rv32i-commit-prefix.backing-memory
+DIFF_ALU_BRANCH_BACKING := $(BUILD_DIR)/rv32i-alu-branch-prefix.backing-memory
+DIFF_RV32M_BACKING := $(BUILD_DIR)/rv32m-commit-prefix.backing-memory
+RV32A_TOHOST_BACKING := $(BUILD_DIR)/rv32a-tohost.backing-memory
+RV32A_TOHOST_SPIKE_LOG := $(BUILD_DIR)/rv32a-tohost.spike.log
 THROUGHPUT_ELF := $(BUILD_DIR)/sim-throughput.elf
 THROUGHPUT_TRACE := $(BUILD_DIR)/sim-throughput.jsonl
 THROUGHPUT_CYCLES ?= 100000
@@ -48,7 +53,7 @@ CORE_SCALA_SOURCES := $(shell find $(PARENT_DIR)/src/main/scala -type f -name '*
 CORE_BUILD_INPUTS := $(CORE_SCALA_SOURCES) $(PARENT_DIR)/build.sbt \
 	$(wildcard $(PARENT_DIR)/project/*.sbt) $(wildcard $(PARENT_DIR)/project/*.scala)
 
-.PHONY: all unit software verilog trace-verilog rtl trace-rtl smoke trace-smoke tohost tohost-rv32i-prefix tohost-rv32i-alu-branch tohost-rv32m tohost-rv32a throughput diff diff-prefix diff-alu-branch diff-rv32m diff-sail-rv32m micro-ipc-rv32m check-baseline-2024 baseline-ipc-rv32m clean
+.PHONY: all unit software verilog trace-verilog rtl trace-rtl smoke trace-smoke tohost tohost-rv32i-prefix tohost-rv32i-alu-branch tohost-rv32m tohost-rv32a throughput diff diff-prefix diff-alu-branch diff-rv32m diff-sail-rv32m diff-memory-spike diff-memory-rv32i-prefix diff-memory-rv32i-alu-branch diff-memory-rv32m diff-memory-rv32a micro-ipc-rv32m check-baseline-2024 baseline-ipc-rv32m clean
 
 all: unit
 
@@ -59,9 +64,9 @@ $(UNIT_BINARY): src/CommitTrace.cc src/DeterministicAxiMemory.cc src/ElfImage.cc
 	@mkdir -p $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) src/CommitTrace.cc src/DeterministicAxiMemory.cc src/ElfImage.cc tests/UnitTests.cc -o $@
 
-$(DIFF_BINARY): src/CommitTrace.cc src/CommitTraceDiff.cc include/CommitTrace.h
+$(DIFF_BINARY): src/CommitTrace.cc src/CommitTraceDiff.cc src/ElfImage.cc include/CommitTrace.h include/ElfImage.h
 	@mkdir -p $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) src/CommitTrace.cc src/CommitTraceDiff.cc -o $@
+	$(CXX) $(CXXFLAGS) src/CommitTrace.cc src/CommitTraceDiff.cc src/ElfImage.cc -o $@
 
 $(BASELINE_IPC_BINARY): src/BaselineIpcRunner.cc src/DeterministicAxiMemory.cc src/ElfImage.cc include/DeterministicAxiMemory.h include/ElfImage.h
 	@test -n "$(BASELINE_2024)" || (echo "BASELINE_2024 must name a clean Zircon-2024 checkout"; exit 2)
@@ -130,16 +135,16 @@ trace-smoke: trace-rtl software
 tohost: tohost-rv32i-prefix tohost-rv32i-alu-branch tohost-rv32m tohost-rv32a
 
 tohost-rv32i-prefix: rtl $(DIFF_PREFIX_ELF)
-	$(RTL_BINARY) --elf $(DIFF_PREFIX_ELF) --retire-trace $(DIFF_PREFIX_TRACE) --seed 1 --max-cycles 1024
+	$(RTL_BINARY) --elf $(DIFF_PREFIX_ELF) --retire-trace $(DIFF_PREFIX_TRACE) --backing-memory $(DIFF_PREFIX_BACKING) --seed 1 --max-cycles 1024
 
 tohost-rv32i-alu-branch: rtl $(DIFF_ALU_BRANCH_ELF)
-	$(RTL_BINARY) --elf $(DIFF_ALU_BRANCH_ELF) --retire-trace $(DIFF_ALU_BRANCH_TRACE) --seed 1 --max-cycles 1024
+	$(RTL_BINARY) --elf $(DIFF_ALU_BRANCH_ELF) --retire-trace $(DIFF_ALU_BRANCH_TRACE) --backing-memory $(DIFF_ALU_BRANCH_BACKING) --seed 1 --max-cycles 1024
 
 tohost-rv32m: rtl $(DIFF_RV32M_ELF)
-	$(RTL_BINARY) --elf $(DIFF_RV32M_ELF) --retire-trace $(BUILD_DIR)/rv32m-tohost.jsonl --seed 1 --max-cycles 2048
+	$(RTL_BINARY) --elf $(DIFF_RV32M_ELF) --retire-trace $(BUILD_DIR)/rv32m-tohost.jsonl --backing-memory $(DIFF_RV32M_BACKING) --seed 1 --max-cycles 2048
 
 tohost-rv32a: rtl $(RV32A_TOHOST_ELF)
-	$(RTL_BINARY) --elf $(RV32A_TOHOST_ELF) --retire-trace $(RV32A_TOHOST_TRACE) --seed 1 --max-cycles 2048
+	$(RTL_BINARY) --elf $(RV32A_TOHOST_ELF) --retire-trace $(RV32A_TOHOST_TRACE) --backing-memory $(RV32A_TOHOST_BACKING) --seed 1 --max-cycles 2048
 
 throughput: rtl $(THROUGHPUT_ELF)
 	$(RTL_BINARY) --elf $(THROUGHPUT_ELF) --retire-trace $(THROUGHPUT_TRACE) --seed 1 --max-cycles $(THROUGHPUT_CYCLES) --allow-timeout
@@ -163,6 +168,25 @@ diff-sail-rv32m: tohost-rv32m $(DIFF_BINARY)
 	cp $(BUILD_DIR)/rv32m-tohost.jsonl $(DIFF_RV32M_TRACE)
 	$(SAIL) --rv32 --inst-limit 17 --trace-output $(DIFF_RV32M_SAIL_LOG) --trace-instr --trace-gpr --trace-csr $(DIFF_RV32M_ELF)
 	$(DIFF_BINARY) --zircon-trace $(DIFF_RV32M_TRACE) --sail-log $(DIFF_RV32M_SAIL_LOG) --max-events 17
+
+diff-memory-spike: diff-memory-rv32i-prefix diff-memory-rv32i-alu-branch diff-memory-rv32m diff-memory-rv32a
+
+diff-memory-rv32i-prefix: tohost-rv32i-prefix $(DIFF_BINARY)
+	$(SPIKE) --isa=RV32I_Zicsr_Zifencei --priv=m --pc=0x80000000 --instructions=19 --log-commits --log=$(DIFF_PREFIX_SPIKE_LOG) $(DIFF_PREFIX_ELF)
+	$(DIFF_BINARY) --zircon-trace $(DIFF_PREFIX_TRACE) --spike-log $(DIFF_PREFIX_SPIKE_LOG) --memory-elf $(DIFF_PREFIX_ELF) --backing-memory $(DIFF_PREFIX_BACKING) --max-events 19
+
+diff-memory-rv32i-alu-branch: tohost-rv32i-alu-branch $(DIFF_BINARY)
+	$(SPIKE) --isa=RV32I_Zicsr_Zifencei --priv=m --pc=0x80000000 --instructions=34 --log-commits --log=$(DIFF_ALU_BRANCH_SPIKE_LOG) $(DIFF_ALU_BRANCH_ELF)
+	$(DIFF_BINARY) --zircon-trace $(DIFF_ALU_BRANCH_TRACE) --spike-log $(DIFF_ALU_BRANCH_SPIKE_LOG) --memory-elf $(DIFF_ALU_BRANCH_ELF) --backing-memory $(DIFF_ALU_BRANCH_BACKING) --max-events 34
+
+diff-memory-rv32m: tohost-rv32m $(DIFF_BINARY)
+	cp $(BUILD_DIR)/rv32m-tohost.jsonl $(DIFF_RV32M_TRACE)
+	$(SPIKE) --isa=RV32IM_Zicsr_Zifencei --priv=m --pc=0x80000000 --instructions=19 --log-commits --log=$(DIFF_RV32M_SPIKE_LOG) $(DIFF_RV32M_ELF)
+	$(DIFF_BINARY) --zircon-trace $(DIFF_RV32M_TRACE) --spike-log $(DIFF_RV32M_SPIKE_LOG) --memory-elf $(DIFF_RV32M_ELF) --backing-memory $(DIFF_RV32M_BACKING) --max-events 19
+
+diff-memory-rv32a: tohost-rv32a $(DIFF_BINARY)
+	$(SPIKE) --isa=RV32IMA_Zicsr_Zifencei --priv=m --pc=0x80000000 --instructions=12 --log-commits --log=$(RV32A_TOHOST_SPIKE_LOG) $(RV32A_TOHOST_ELF)
+	$(DIFF_BINARY) --zircon-trace $(RV32A_TOHOST_TRACE) --spike-log $(RV32A_TOHOST_SPIKE_LOG) --memory-elf $(RV32A_TOHOST_ELF) --backing-memory $(RV32A_TOHOST_BACKING) --max-events 12
 
 micro-ipc-rv32m: rtl $(DIFF_RV32M_ELF)
 	$(RTL_BINARY) --elf $(DIFF_RV32M_ELF) --retire-trace $(BUILD_DIR)/rv32m-ipc-prefix.jsonl --seed 1 --max-cycles 2048 --expect-retired 17 --stop-after-retired 17
