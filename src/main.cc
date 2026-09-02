@@ -147,6 +147,13 @@ void driveSlave(VZirconCore& dut, const zircon::sim::AxiSlaveSignals& slave,
   dut.io_interrupts_meip = 0;
   dut.io_interrupts_msip = 0;
   dut.io_interrupts_mtip = 0;
+  // ZirconSim is a single-hart/private-memory platform. It explicitly leaves
+  // the production external-coherence sideband idle rather than relying on
+  // Verilator's input initialization.
+  dut.io_externalCoherence_request_valid = 0;
+  dut.io_externalCoherence_request_bits_kind = 0;
+  dut.io_externalCoherence_request_bits_lineAddress = 0;
+  dut.io_externalCoherence_response_ready = 1;
   dut.io_hostFlush_enable = 1;
   dut.io_hostFlush_address = tohost_address;
 }
