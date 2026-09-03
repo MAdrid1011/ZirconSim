@@ -119,6 +119,7 @@ int main(int argc, char** argv) {
   }
 
   std::set<uint8_t> response_ids;
+  std::vector<uint8_t> response_order;
   std::map<uint8_t, uint32_t> response_beats;
   std::map<uint8_t, uint32_t> response_last_data;
   uint32_t response_count = 0;
@@ -128,6 +129,7 @@ int main(int argc, char** argv) {
     ready.r_ready = true;
     if (offered.r_valid) {
       response_ids.insert(offered.r_id);
+      response_order.push_back(offered.r_id);
       ++response_beats[offered.r_id];
       ++response_count;
       if (offered.r_last) response_last_data[offered.r_id] = offered.r_data;
@@ -135,6 +137,8 @@ int main(int argc, char** argv) {
     }
     multi_axi.advance(ready, offered);
   }
+  assert(response_order.size() == 8);
+  assert(std::set<uint8_t>(response_order.begin(), response_order.begin() + 4).size() >= 2);
   assert(response_ids == std::set<uint8_t>({1, 2, 3, 4}));
   for (uint8_t id = 1; id <= 4; ++id) {
     assert(response_beats[id] == 2);
