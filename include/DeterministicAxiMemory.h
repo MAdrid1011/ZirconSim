@@ -1,6 +1,8 @@
 #ifndef ZIRCON_SIM_DETERMINISTIC_AXI_MEMORY_H
 #define ZIRCON_SIM_DETERMINISTIC_AXI_MEMORY_H
 
+#include <array>
+#include <cstddef>
 #include <cstdint>
 
 #include "DeterministicRng.h"
@@ -45,9 +47,10 @@ struct AxiSlaveSignals {
 
 /** Deterministic AXI4 slave used by the Verilator harness.
  *
- * One read and one write burst may be outstanding. The model uses the explicit
- * non-zero seed only to decide legal backpressure and response latency; once a
- * valid response is asserted it remains stable until handshake.
+ * Up to four read bursts may be outstanding and their R beats may interleave
+ * across IDs. The model uses the explicit non-zero seed only to decide legal
+ * backpressure and response latency; once a valid response is asserted it
+ * remains stable until handshake.
  */
 class DeterministicAxiMemory {
  public:
@@ -59,19 +62,26 @@ class DeterministicAxiMemory {
   const SparseMemory& memory() const { return memory_; }
 
  private:
-  enum class ReadState { Idle, Respond };
   enum class WriteState { Address, Data, Response };
 
   SparseMemory memory_;
   DeterministicRng rng_;
 
-  ReadState read_state_ = ReadState::Idle;
-  uint8_t read_id_ = 0;
-  uint32_t read_address_ = 0;
-  uint32_t read_remaining_ = 0;
-  uint32_t read_stride_ = 4;
-  uint32_t read_delay_ = 0;
-  uint8_t read_response_ = 0;
+  static constexpr size_t kMaxReadOwners = 4;
+  struct ReadOwner {
+    bool valid = false;
+    uint8_t id = 0;
+    uint32_t address = 0;
+    uint32_t remaining = 0;
+    uint32_t stride = 4;
+    uint32_t delay = 0;
+    uint8_t response = 0;
+    uint64_t sequence = 0;
+  };
+
+  std::array<ReadOwner, kMaxReadOwners> read_owners_{};
+  int read_offer_ = -1;
+  uint64_t next_read_sequence_ = 0;
 
   WriteState write_state_ = WriteState::Address;
   uint8_t write_id_ = 0;

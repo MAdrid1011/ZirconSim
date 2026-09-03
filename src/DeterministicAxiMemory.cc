@@ -41,14 +41,33 @@ bool DeterministicAxiMemory::validIncrementingBurst(
 
 AxiSlaveSignals DeterministicAxiMemory::drive() {
   AxiSlaveSignals slave;
-  if (read_state_ == ReadState::Idle) {
-    slave.ar_ready = acceptThisCycle();
-  } else if (read_delay_ == 0) {
+  for (size_t index = 0; index < kMaxReadOwners; ++index) {
+    if (!read_owners_[index].valid) {
+      slave.ar_ready = acceptThisCycle();
+      break;
+    }
+  }
+
+  // Keep the selected beat stable while the core backpressures R. Once the
+  // offer is consumed, choose another ready owner using the seeded RNG.
+  if (read_offer_ < 0 || !read_owners_[static_cast<size_t>(read_offer_)].valid ||
+      read_owners_[static_cast<size_t>(read_offer_)].delay != 0) {
+    read_offer_ = -1;
+    for (size_t index = 0; index < kMaxReadOwners; ++index) {
+      if (read_owners_[index].valid && read_owners_[index].delay == 0) {
+        if (read_offer_ < 0 || acceptThisCycle()) {
+          read_offer_ = static_cast<int>(index);
+        }
+      }
+    }
+  }
+  if (read_offer_ >= 0) {
+    const auto& owner = read_owners_[static_cast<size_t>(read_offer_)];
     slave.r_valid = true;
-    slave.r_id = read_id_;
-    slave.r_data = read_response_ == kAxiOkay ? memory_.read32(read_address_) : 0;
-    slave.r_resp = read_response_;
-    slave.r_last = read_remaining_ == 1;
+    slave.r_id = owner.id;
+    slave.r_data = owner.response == kAxiOkay ? memory_.read32(owner.address) : 0;
+    slave.r_resp = owner.response;
+    slave.r_last = owner.remaining == 1;
   }
 
   switch (write_state_) {
@@ -71,30 +90,52 @@ AxiSlaveSignals DeterministicAxiMemory::drive() {
 
 void DeterministicAxiMemory::advance(const AxiMasterSignals& master,
                                      const AxiSlaveSignals& slave) {
-  if (read_state_ == ReadState::Idle) {
-    if (master.ar_valid && slave.ar_ready) {
-      read_state_ = ReadState::Respond;
-      read_id_ = master.ar_id;
-      read_address_ = master.ar_addr;
-      read_remaining_ = static_cast<uint32_t>(master.ar_len) + 1u;
-      read_stride_ = transferStride(master.ar_size);
-      read_response_ = validIncrementingBurst(master.ar_addr, master.ar_len,
-                                               master.ar_size, master.ar_burst)
-                           ? kAxiOkay
-                           : kAxiDecodeError;
-      read_delay_ = rng_.next32() % 4u;
+  int accepted_read = -1;
+  if (master.ar_valid && slave.ar_ready) {
+    for (size_t index = 0; index < kMaxReadOwners; ++index) {
+      if (!read_owners_[index].valid) {
+        accepted_read = static_cast<int>(index);
+        break;
+      }
     }
-  } else if (read_delay_ != 0) {
-    --read_delay_;
-  } else if (slave.r_valid && master.r_ready) {
-    if (read_remaining_ == 0) {
+    if (accepted_read < 0) {
+      throw std::logic_error("AXI read accepted without a free owner");
+    }
+    auto& owner = read_owners_[static_cast<size_t>(accepted_read)];
+    owner.valid = true;
+    owner.id = master.ar_id;
+    owner.address = master.ar_addr;
+    owner.remaining = static_cast<uint32_t>(master.ar_len) + 1u;
+    owner.stride = transferStride(master.ar_size);
+    owner.response = validIncrementingBurst(master.ar_addr, master.ar_len,
+                                            master.ar_size, master.ar_burst)
+                         ? kAxiOkay
+                         : kAxiDecodeError;
+    owner.delay = rng_.next32() % 4u;
+    owner.sequence = next_read_sequence_++;
+  }
+
+  for (auto& owner : read_owners_) {
+    if (owner.valid && owner.delay != 0 &&
+        static_cast<int>(&owner - read_owners_.data()) != accepted_read) {
+      --owner.delay;
+    }
+  }
+
+  if (slave.r_valid && master.r_ready) {
+    if (read_offer_ < 0 || !read_owners_[static_cast<size_t>(read_offer_)].valid) {
+      throw std::logic_error("AXI read response accepted without a live owner");
+    }
+    auto& owner = read_owners_[static_cast<size_t>(read_offer_)];
+    if (owner.remaining == 0) {
       throw std::logic_error("AXI read underflow");
     }
-    --read_remaining_;
-    if (read_remaining_ == 0) {
-      read_state_ = ReadState::Idle;
+    --owner.remaining;
+    if (owner.remaining == 0) {
+      owner.valid = false;
+      read_offer_ = -1;
     } else {
-      read_address_ += read_stride_;
+      owner.address += owner.stride;
     }
   }
 

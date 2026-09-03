@@ -1,6 +1,8 @@
 #include <cassert>
 #include <iomanip>
 #include <iostream>
+#include <map>
+#include <set>
 #include <sstream>
 #include <stdexcept>
 
@@ -89,6 +91,54 @@ int main(int argc, char** argv) {
     }
   }
   assert(observed_read);
+
+  // M3 owns four physical demand IDs. Exercise all owners concurrently and
+  // require cross-ID interleaving without disturbing per-owner beat order.
+  zircon::sim::SparseMemory multi_memory;
+  for (uint32_t index = 0; index < 4; ++index) {
+    multi_memory.write32(0x80000100u + index * 0x100u, 0x10000000u + index * 2u);
+    multi_memory.write32(0x80000104u + index * 0x100u, 0x10000001u + index * 2u);
+  }
+  zircon::sim::DeterministicAxiMemory multi_axi(multi_memory, 19);
+  for (uint8_t id = 1; id <= 4; ++id) {
+    zircon::sim::AxiMasterSignals request;
+    request.ar_valid = true;
+    request.ar_id = id;
+    request.ar_addr = 0x80000100u + static_cast<uint32_t>(id - 1) * 0x100u;
+    request.ar_len = 1;
+    request.ar_size = 2;
+    request.ar_burst = 1;
+    bool accepted = false;
+    for (int cycle = 0; cycle < 64 && !accepted; ++cycle) {
+      const auto offered = multi_axi.drive();
+      multi_axi.advance(request, offered);
+      accepted = offered.ar_ready;
+    }
+    assert(accepted);
+  }
+
+  std::set<uint8_t> response_ids;
+  std::map<uint8_t, uint32_t> response_beats;
+  std::map<uint8_t, uint32_t> response_last_data;
+  uint32_t response_count = 0;
+  for (int cycle = 0; cycle < 256 && response_count < 8; ++cycle) {
+    const auto offered = multi_axi.drive();
+    zircon::sim::AxiMasterSignals ready;
+    ready.r_ready = true;
+    if (offered.r_valid) {
+      response_ids.insert(offered.r_id);
+      ++response_beats[offered.r_id];
+      ++response_count;
+      if (offered.r_last) response_last_data[offered.r_id] = offered.r_data;
+      assert(offered.r_resp == 0);
+    }
+    multi_axi.advance(ready, offered);
+  }
+  assert(response_ids == std::set<uint8_t>({1, 2, 3, 4}));
+  for (uint8_t id = 1; id <= 4; ++id) {
+    assert(response_beats[id] == 2);
+    assert(response_last_data[id] == 0x10000001u + static_cast<uint32_t>(id - 1) * 2u);
+  }
 
   std::istringstream zircon_trace(
       "{\"order\":0,\"pc\":2147483648,\"instruction\":5243027,\"privilege\":3,\"gprWrite\":true,\"gprAddress\":1,\"gprData\":5,\"fprWrite\":false,\"csrWrite\":false,\"csrAddress\":0,\"csrData\":0,\"memoryAddress\":0,\"memoryReadMask\":0,\"memoryWriteMask\":0,\"memoryReadData\":0,\"memoryWriteData\":0,\"trap\":false,\"interrupt\":false}\n"
