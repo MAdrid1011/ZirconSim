@@ -92,6 +92,7 @@ class DeterministicAxiMemory {
   uint8_t write_response_ = 0;
 
   bool acceptThisCycle();
+  bool hasOlderOwnerWithId(size_t index) const;
   static uint32_t transferStride(uint8_t size);
   static bool validIncrementingBurst(uint32_t address, uint8_t length,
                                      uint8_t size, uint8_t burst);

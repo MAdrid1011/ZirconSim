@@ -20,6 +20,18 @@ bool DeterministicAxiMemory::acceptThisCycle() {
   return rng_.chance(9, 10);
 }
 
+bool DeterministicAxiMemory::hasOlderOwnerWithId(size_t index) const {
+  const auto& candidate = read_owners_[index];
+  for (size_t other = 0; other < kMaxReadOwners; ++other) {
+    const auto& owner = read_owners_[other];
+    if (other != index && owner.valid && owner.id == candidate.id &&
+        owner.sequence < candidate.sequence) {
+      return true;
+    }
+  }
+  return false;
+}
+
 uint32_t DeterministicAxiMemory::transferStride(uint8_t size) {
   if (size > 2) {
     return 0;
@@ -54,7 +66,8 @@ AxiSlaveSignals DeterministicAxiMemory::drive() {
       read_owners_[static_cast<size_t>(read_offer_)].delay != 0) {
     read_offer_ = -1;
     for (size_t index = 0; index < kMaxReadOwners; ++index) {
-      if (read_owners_[index].valid && read_owners_[index].delay == 0) {
+      if (read_owners_[index].valid && read_owners_[index].delay == 0 &&
+          !hasOlderOwnerWithId(index)) {
         if (read_offer_ < 0 || acceptThisCycle()) {
           read_offer_ = static_cast<int>(index);
         }

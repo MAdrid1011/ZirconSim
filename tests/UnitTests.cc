@@ -5,6 +5,7 @@
 #include <set>
 #include <sstream>
 #include <stdexcept>
+#include <vector>
 
 #include "CommitTrace.h"
 #include "DeterministicRng.h"
@@ -139,6 +140,40 @@ int main(int argc, char** argv) {
     assert(response_beats[id] == 2);
     assert(response_last_data[id] == 0x10000001u + static_cast<uint32_t>(id - 1) * 2u);
   }
+
+  zircon::sim::SparseMemory ordered_memory;
+  ordered_memory.write32(0x80001000u, 0xaaaa0001u);
+  ordered_memory.write32(0x80001004u, 0xbbbb0002u);
+  zircon::sim::DeterministicAxiMemory ordered_axi(ordered_memory, 23);
+  for (uint32_t address : {0x80001000u, 0x80001004u}) {
+    zircon::sim::AxiMasterSignals request;
+    request.ar_valid = true;
+    request.ar_id = 3;
+    request.ar_addr = address;
+    request.ar_len = 0;
+    request.ar_size = 2;
+    request.ar_burst = 1;
+    bool accepted = false;
+    for (int cycle = 0; cycle < 64 && !accepted; ++cycle) {
+      const auto offered = ordered_axi.drive();
+      ordered_axi.advance(request, offered);
+      accepted = offered.ar_ready;
+    }
+    assert(accepted);
+  }
+  std::vector<uint32_t> same_id_data;
+  for (int cycle = 0; cycle < 128 && same_id_data.size() < 2; ++cycle) {
+    const auto offered = ordered_axi.drive();
+    zircon::sim::AxiMasterSignals ready;
+    ready.r_ready = true;
+    if (offered.r_valid) {
+      assert(offered.r_id == 3);
+      assert(offered.r_last);
+      same_id_data.push_back(offered.r_data);
+    }
+    ordered_axi.advance(ready, offered);
+  }
+  assert(same_id_data == std::vector<uint32_t>({0xaaaa0001u, 0xbbbb0002u}));
 
   std::istringstream zircon_trace(
       "{\"order\":0,\"pc\":2147483648,\"instruction\":5243027,\"privilege\":3,\"gprWrite\":true,\"gprAddress\":1,\"gprData\":5,\"fprWrite\":false,\"csrWrite\":false,\"csrAddress\":0,\"csrData\":0,\"memoryAddress\":0,\"memoryReadMask\":0,\"memoryWriteMask\":0,\"memoryReadData\":0,\"memoryWriteData\":0,\"trap\":false,\"interrupt\":false}\n"
