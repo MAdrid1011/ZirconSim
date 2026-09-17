@@ -424,13 +424,13 @@ int main(int argc, char **argv) {
         zircon::sim::Statistic statistic;
         std::unique_ptr<zircon::sim::SpikeReference> reference;
         if (options.difftest) {
-            reference = std::make_unique<zircon::sim::SpikeReference>(ZIRCON_SPIKE_PATH, options.elf, image.entry());
+            reference = std::make_unique<zircon::sim::SpikeReference>(image.memory(), image.entry());
         }
         uint64_t cycles_without_retirement = 0;
         uint64_t retired_instructions = 0;
         uint64_t measured_cycles = 0;
         uint64_t measured_instructions = 0;
-        std::array<uint32_t, 32> integer_registers{};
+        zircon::sim::SpikeArchitecturalState architectural_state;
         std::optional<zircon::sim::PerformanceSnapshot> measured_performance;
         bool capture_measured_performance = false;
         bool reference_complete = false;
@@ -567,12 +567,14 @@ int main(int argc, char **argv) {
                             continue;
                         }
                         const zircon::sim::SpikeCommit expected = *next_expected;
+                        const bool synchronize =
+                            zircon::sim::SpikeReference::requiresSynchronization(retire_instruction);
                         const bool destinationMismatch =
                             expected.write_valid != retire_write_valid ||
                             (expected.write_valid && (expected.is_fp != retire_is_fp || expected.rd != retire_rd ||
                                                       expected.value != retire_value));
                         if (expected.pc != retire_pc || expected.instruction != retire_instruction ||
-                            destinationMismatch) {
+                            (!synchronize && destinationMismatch)) {
                             progress_reporter.finish();
                             dut.final();
                             closeTrace();
@@ -593,9 +595,16 @@ int main(int argc, char **argv) {
                             std::cerr << std::dec << std::endl;
                             return 126;
                         }
+                        if (retire_write_valid && retire_rd != 0) {
+                            auto &registers = retire_is_fp ? architectural_state.floating : architectural_state.integer;
+                            registers[retire_rd] = retire_value;
+                        }
+                        if (synchronize) {
+                            reference->synchronize(architectural_state);
+                        }
                     }
                     if (measured_cycles == 0) {
-                        const auto store = decodeRetiredStore(retire_instruction, integer_registers);
+                        const auto store = decodeRetiredStore(retire_instruction, architectural_state.integer);
                         if (store.has_value() && storeCoversAddress(*store, *tohost)) {
                             measured_cycles = cycle + 1;
                             measured_instructions = retired_instructions;
@@ -603,7 +612,9 @@ int main(int argc, char **argv) {
                         }
                     }
                     if (retire_write_valid && !retire_is_fp && retire_rd != 0) {
-                        integer_registers[retire_rd] = retire_value;
+                        architectural_state.integer[retire_rd] = retire_value;
+                    } else if (retire_write_valid && retire_is_fp) {
+                        architectural_state.floating[retire_rd] = retire_value;
                     }
                 }
             }
