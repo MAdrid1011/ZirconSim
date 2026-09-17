@@ -1,5 +1,11 @@
 #include "AXIMemory.h"
 
+#include <iostream>
+
+namespace {
+constexpr uint32_t kUartAddress = 0xa00003f8u;
+}
+
 AXIMemory::AXIMemory(zircon::sim::SparseMemory& memory, uint32_t tohost, uint64_t seed)
     : memory_(memory), exit_(tohost), rng_(seed) {}
 
@@ -65,6 +71,10 @@ std::optional<int> AXIMemory::update(VZirconCore& cpu) {
         const uint32_t data = cpu.io_axi_w_bits_data;
         const uint8_t strobe = cpu.io_axi_w_bits_strb;
         memory_.write32(address, data, strobe);
+        if (address == kUartAddress && (strobe & 1u) != 0) {
+            std::cout.put(static_cast<char>(data & 0xffu));
+            std::cout.flush();
+        }
         const auto result = exit_.observeWrite(address, data, strobe);
 
         if (cpu.io_axi_w_bits_last || writeBeat_ == writeLength_) {
