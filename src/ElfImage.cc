@@ -104,11 +104,15 @@ std::string readString(const std::vector<uint8_t>& file, size_t base, size_t siz
 }  // namespace
 
 uint8_t SparseMemory::read8(uint32_t address) const {
-  const auto value = bytes_.find(address);
-  return value == bytes_.end() ? 0 : value->second;
+  const auto value = words_.find(address >> 2);
+  return value == words_.end() ? 0 : static_cast<uint8_t>(value->second >> ((address & 3u) * 8));
 }
 
 uint32_t SparseMemory::read32(uint32_t address) const {
+  if ((address & 3u) == 0) {
+    const auto value = words_.find(address >> 2);
+    return value == words_.end() ? 0 : value->second;
+  }
   uint32_t value = 0;
   for (uint32_t byte = 0; byte < 4; ++byte) {
     value |= static_cast<uint32_t>(read8(address + byte)) << (byte * 8);
@@ -116,9 +120,24 @@ uint32_t SparseMemory::read32(uint32_t address) const {
   return value;
 }
 
-void SparseMemory::write8(uint32_t address, uint8_t value) { bytes_[address] = value; }
+void SparseMemory::write8(uint32_t address, uint8_t value) {
+  const uint32_t shift = (address & 3u) * 8;
+  const uint32_t mask = 0xffu << shift;
+  uint32_t& word = words_[address >> 2];
+  word = (word & ~mask) | (static_cast<uint32_t>(value) << shift);
+}
 
 void SparseMemory::write32(uint32_t address, uint32_t value, uint8_t strobe) {
+  if ((address & 3u) == 0) {
+    uint32_t& word = words_[address >> 2];
+    for (uint32_t byte = 0; byte < 4; ++byte) {
+      if ((strobe & (1u << byte)) != 0) {
+        const uint32_t mask = 0xffu << (byte * 8);
+        word = (word & ~mask) | (value & mask);
+      }
+    }
+    return;
+  }
   for (uint32_t byte = 0; byte < 4; ++byte) {
     if ((strobe & (1u << byte)) != 0) {
       write8(address + byte, static_cast<uint8_t>(value >> (byte * 8)));
