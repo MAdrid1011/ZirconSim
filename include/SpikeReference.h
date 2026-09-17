@@ -1,10 +1,13 @@
 #ifndef ZIRCON_SIM_SPIKE_REFERENCE_H
 #define ZIRCON_SIM_SPIKE_REFERENCE_H
 
+#include <array>
 #include <cstdint>
-#include <cstdio>
+#include <memory>
 #include <optional>
 #include <string>
+
+#include "ElfImage.h"
 
 namespace zircon::sim {
 
@@ -19,21 +22,27 @@ struct SpikeCommit {
 
 std::optional<SpikeCommit> parseSpikeCommitLine(const std::string &line);
 
+struct SpikeArchitecturalState {
+    std::array<uint32_t, 32> integer{};
+    std::array<uint32_t, 32> floating{};
+};
+
 class SpikeReference {
   public:
-    SpikeReference(const std::string &spike, const std::string &elf, uint32_t entry);
+    SpikeReference(const SparseMemory &memory, uint32_t entry);
     ~SpikeReference();
 
     SpikeReference(const SpikeReference &) = delete;
     SpikeReference &operator=(const SpikeReference &) = delete;
 
     std::optional<SpikeCommit> next();
+    void synchronize(const SpikeArchitecturalState &state);
+
+    static bool requiresSynchronization(uint32_t instruction);
 
   private:
-    FILE *stream_ = nullptr;
-    uint32_t entry_ = 0;
-    bool reached_entry_ = false;
-    std::string last_line_;
+    class Impl;
+    std::unique_ptr<Impl> impl_;
 };
 
 } // namespace zircon::sim

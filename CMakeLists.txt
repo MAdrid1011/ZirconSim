@@ -3,13 +3,10 @@ find_package(verilator CONFIG REQUIRED HINTS
     "${VERILATOR_ROOT}"
 )
 find_package(Threads REQUIRED)
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(SPIKE REQUIRED IMPORTED_TARGET riscv-riscv)
 
-set(ZIRCON_SPIKE "" CACHE FILEPATH "Path to the Spike executable")
 option(ZIRCON_SIM_ENABLE_VCD "Build zircon-sim with bounded VCD tracing support" OFF)
-if(NOT ZIRCON_SPIKE)
-    find_program(ZIRCON_SPIKE_EXECUTABLE NAMES spike REQUIRED)
-    set(ZIRCON_SPIKE "${ZIRCON_SPIKE_EXECUTABLE}" CACHE FILEPATH "Path to the Spike executable" FORCE)
-endif()
 
 add_executable(zircon-sim
     src/AXIMemory.cc
@@ -28,12 +25,11 @@ target_compile_options(zircon-sim PRIVATE
     -Wno-unused-variable
 )
 target_include_directories(zircon-sim PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include")
-target_compile_definitions(zircon-sim PRIVATE ZIRCON_SPIKE_PATH="${ZIRCON_SPIKE}")
 if(ZIRCON_SIM_ENABLE_VCD)
     target_compile_definitions(zircon-sim PRIVATE ZIRCON_ENABLE_VCD=1)
     set(ZIRCON_VERILATE_TRACE TRACE_VCD)
 endif()
-target_link_libraries(zircon-sim PRIVATE Threads::Threads)
+target_link_libraries(zircon-sim PRIVATE Threads::Threads PkgConfig::SPIKE)
 set_target_properties(zircon-sim PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
@@ -65,6 +61,7 @@ add_executable(zircon-sim-unit
 target_compile_features(zircon-sim-unit PRIVATE cxx_std_20)
 target_compile_options(zircon-sim-unit PRIVATE -Wall -Wextra -Werror -UNDEBUG)
 target_include_directories(zircon-sim-unit PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include")
+target_link_libraries(zircon-sim-unit PRIVATE PkgConfig::SPIKE)
 set_target_properties(zircon-sim-unit PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )

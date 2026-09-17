@@ -11,6 +11,10 @@ cmake --build ../build/cmake --target zircon-sim --parallel
 ../build/cmake/bin/zircon-sim --elf path/to/test.elf
 ```
 
+The build requires the Spike development library and its `riscv-riscv.pc`
+pkg-config metadata. ZirconSim steps Spike as an in-process reference model,
+avoiding the large commit-log stream of an external Spike process.
+
 CMake tracks the Chisel sources, elaborates `ZirconCore`, invokes Verilator
 through its native CMake integration, and links the simulator. The retained
 Makefile is a compatibility wrapper around these CMake targets. Passing
@@ -33,6 +37,15 @@ Pipeline and cache events are accumulated by RTL counters. ZirconSim reads
 those counters once when the program exits and writes a Markdown report under
 `reports/`; it does not sample the performance interface every cycle. The only
 per-cycle debug reads are the three retirement lanes required by Difftest.
+
+Counter CSRs cannot be compared by absolute value because Spike instructions
+and RTL cycles advance them on different time bases. For `cycle`, `time`,
+`instret`, `mcycle`, and `minstret` reads, Difftest compares the PC and
+instruction, accepts the DUT result for that operation, copies the complete
+architectural GPR/FPR state into Spike, and resumes strict comparison on the
+next instruction. Synchronous exception steps are omitted from the Spike
+retirement stream because the RTL retirement interface reports only
+instructions that increment `minstret`.
 
 When the `RV-Software` submodule is present, the `zircon-functest-dummy` target
 builds the initial software test through the same top-level CMake build.
