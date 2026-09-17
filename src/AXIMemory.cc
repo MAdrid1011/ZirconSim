@@ -1,176 +1,87 @@
 #include "AXIMemory.h"
 
-AXIMemory::AXIMemory(std::string imgPath, uint32_t baseAddr, Device* device) {
-    this->device = device;
+AXIMemory::AXIMemory(zircon::sim::SparseMemory& memory, uint32_t tohost, uint64_t seed)
+    : memory_(memory), exit_(tohost), rng_(seed) {}
 
-    if(imgPath.empty()) {
-        memory.emplace(baseAddr >> 2, 0x80000000);
-        refMemory.emplace(baseAddr >> 2, 0x80000000);
-        return;
-    } 
-    // open binary file
-    std::ifstream img(imgPath, std::ios::binary);
-    if(!img.is_open()) {
-        return;
-    }
-    // read binary file to memory
-    uint32_t word;
-    uint32_t addr = baseAddr >> 2;
-    while(img.read(reinterpret_cast<char*>(&word), sizeof(uint32_t))) {
-        memory[addr] = word;
-        refMemory[addr] = word;
-        addr += 1;
-    }
-    img.close();
-    srand(time(NULL));
-    // generate random sequence
-    for(int i = 0; i < 1024; i++) {
-        randSeq[i] = rand() % 4;
-    }
+bool AXIMemory::randomReady() {
+    return (rng_.next32() & 3u) != 0;
 }
 
-uint8_t AXIMemory::nextRand() {
-    uint8_t rand = randSeq[randSeqIndex];
-    randSeqIndex = (randSeqIndex + 1) % 1024;
-    return rand;
+bool AXIMemory::randomValid() {
+    return (rng_.next32() & 3u) != 0;
 }
 
-void AXIMemory::read(VCPU* cpu) {
-    switch(readConfig.state) {
-        case AXIReadState::IDLE: {
-            cpu->io_axi_rvalid = 0;
-            cpu->io_axi_rlast = 0;
-            if(cpu->io_axi_arvalid) {
-                readConfig.araddr = cpu->io_axi_araddr;
-                readConfig.arlen = cpu->io_axi_arlen;
-                readConfig.arsize = 1 << cpu->io_axi_arsize;
-                readConfig.arburst = cpu->io_axi_arburst;
-                readConfig.state = AXIReadState::AR;
-            }
-            break;
-        }
-        case AXIReadState::AR: {
-            bool rand = nextRand() != 0;
-            cpu->io_axi_arready = rand;
-            if(rand && cpu->io_axi_arvalid) {
-                readConfig.state = AXIReadState::R;
-            }
-            break;
-        }
-        case AXIReadState::R: {
-            bool rand = nextRand() != 0;
-            cpu->io_axi_arready = 0;
-            cpu->io_axi_rvalid = rand;
-            if(rand) {
-                uint32_t wordAddr = readConfig.araddr >> 2;
-                uint32_t wordOffset = readConfig.araddr & 0x3;
-                uint32_t shiftAmount = wordOffset << 3;
-                uint32_t word = memory[wordAddr] >> shiftAmount;
-                cpu->io_axi_rdata = word;
-                if(readConfig.arlen != 0) {
-                    if(cpu->io_axi_rready) {
-                        readConfig.arlen--;
-                        readConfig.araddr += readConfig.arsize;
-                    }
-                } else {
-                    cpu->io_axi_rlast = 1;
-                    if(cpu->io_axi_rready) {
-                        readConfig.state = AXIReadState::IDLE;
-                    }
-                }
-            }
-            break;
-        }
-        default: {
-            break;
+void AXIMemory::drive(VZirconCore& cpu) {
+    if (readActive_ && !readDataValid_ && randomValid()) {
+        readDataValid_ = true;
+        readData_ = memory_.read32(static_cast<uint32_t>(readAddress_));
+    }
+
+    cpu.io_axi_ar_ready = !readActive_ && randomReady();
+    cpu.io_axi_r_valid = readDataValid_;
+    cpu.io_axi_r_bits_id = readId_;
+    cpu.io_axi_r_bits_data = readData_;
+    cpu.io_axi_r_bits_resp = 0;
+    cpu.io_axi_r_bits_last = readActive_ && readBeat_ == readLength_;
+
+    cpu.io_axi_aw_ready = !writeActive_ && !writeResponseValid_ && randomReady();
+    cpu.io_axi_w_ready = writeActive_ && randomReady();
+    cpu.io_axi_b_valid = writeResponseValid_;
+    cpu.io_axi_b_bits_id = writeId_;
+    cpu.io_axi_b_bits_resp = 0;
+}
+
+std::optional<int> AXIMemory::update(VZirconCore& cpu) {
+    if (cpu.io_axi_ar_valid && cpu.io_axi_ar_ready) {
+        readActive_ = true;
+        readAddress_ = cpu.io_axi_ar_bits_addr;
+        readLength_ = cpu.io_axi_ar_bits_len;
+        readSize_ = uint64_t{1} << cpu.io_axi_ar_bits_size;
+        readId_ = cpu.io_axi_ar_bits_id;
+        readBeat_ = 0;
+    }
+
+    if (cpu.io_axi_r_valid && cpu.io_axi_r_ready) {
+        readDataValid_ = false;
+        if (readBeat_ == readLength_) {
+            readActive_ = false;
+        } else {
+            ++readBeat_;
+            readAddress_ += readSize_;
         }
     }
-}
 
+    if (cpu.io_axi_aw_valid && cpu.io_axi_aw_ready) {
+        writeActive_ = true;
+        writeAddress_ = cpu.io_axi_aw_bits_addr;
+        writeLength_ = cpu.io_axi_aw_bits_len;
+        writeSize_ = uint64_t{1} << cpu.io_axi_aw_bits_size;
+        writeId_ = cpu.io_axi_aw_bits_id;
+        writeBeat_ = 0;
+    }
 
-void AXIMemory::write(VCPU* cpu) {
-    switch(writeConfig.state) {
-        case AXIWriteState::IDLE: {
-            cpu->io_axi_bvalid = 0;
-            if(cpu->io_axi_awvalid) {
-                writeConfig.awaddr = cpu->io_axi_awaddr;
-                writeConfig.awlen = cpu->io_axi_awlen;
-                writeConfig.awsize = 1 << cpu->io_axi_awsize;
-                writeConfig.awburst = cpu->io_axi_awburst;
-                writeConfig.wstrb = cpu->io_axi_wstrb;
-                writeConfig.state = AXIWriteState::AW;
-            }
-            break;
-        }
-        case AXIWriteState::AW: {
-            bool rand = nextRand() != 0;
-            cpu->io_axi_awready = rand;
-            if(rand && cpu->io_axi_awvalid) {
-                writeConfig.state = AXIWriteState::W;
-            }
-            break;
-        }
-        case AXIWriteState::W: {
-            bool rand = nextRand() != 0;
-            cpu->io_axi_awready = 0;
-            cpu->io_axi_wready = rand;
-            if(rand && cpu->io_axi_wvalid) {
-                uint32_t wordAddr = writeConfig.awaddr >> 2;
-                uint32_t wordOffset = writeConfig.awaddr & 0x3;
-                uint8_t wstrb = writeConfig.wstrb << wordOffset;
-                if(wordAddr >> 26 == 0xa) {
-                    device->write(writeConfig.awaddr, cpu->io_axi_wdata);
-                } else {
-                    uint32_t word = memory[wordAddr];
-                    uint32_t wdataShift = cpu->io_axi_wdata << (wordOffset << 3);
-                    for(int i = 0; i < 4; i++) {
-                        if(wstrb & (1 << i)) {
-                            word = (word & ~byteMasks[i]) | (wdataShift & byteMasks[i]);
-                        }
-                    }
-                    memory[wordAddr] = word;
-                }
-                if(cpu->io_axi_wlast){
-                    writeConfig.state = AXIWriteState::B;
-                }
-                writeConfig.awaddr += writeConfig.awsize;
+    if (cpu.io_axi_w_valid && cpu.io_axi_w_ready) {
+        const uint32_t address = static_cast<uint32_t>(writeAddress_);
+        const uint32_t data = cpu.io_axi_w_bits_data;
+        const uint8_t strobe = cpu.io_axi_w_bits_strb;
+        memory_.write32(address, data, strobe);
+        const auto result = exit_.observeWrite(address, data, strobe);
 
-            }
-            break;
+        if (cpu.io_axi_w_bits_last || writeBeat_ == writeLength_) {
+            writeActive_ = false;
+            writeResponseValid_ = true;
+        } else {
+            ++writeBeat_;
+            writeAddress_ += writeSize_;
         }
-        case AXIWriteState::B: {
-            bool rand = nextRand() != 0;
-            cpu->io_axi_wready = 0;
-            cpu->io_axi_bvalid = rand;
-            if(rand && cpu->io_axi_bready) {
-                writeConfig.state = AXIWriteState::IDLE;
-            }
-            break;
-        }
-        default: {
-            break;
+
+        if (result.has_value()) {
+            return result;
         }
     }
-}
 
-uint32_t AXIMemory::refMemoryRead(uint32_t addr) {
-    return refMemory[addr >> 2] >> ((addr & 0x3) << 3);
-}
-
-void AXIMemory::refMemoryWrite(uint32_t addr, uint32_t data, uint8_t wstrb) {
-    uint32_t wordAddr = addr >> 2;
-    uint32_t wordOffset = addr & 0x3;
-    uint8_t wstrbShift = wstrb << wordOffset;
-    uint32_t word = refMemory[wordAddr];
-    uint32_t wdataShift = data << (wordOffset << 3);
-    for(int i = 0; i < 4; i++) {
-        if(wstrbShift & (1 << i)) {
-            word = (word & ~byteMasks[i]) | (wdataShift & byteMasks[i]);
-        }
+    if (cpu.io_axi_b_valid && cpu.io_axi_b_ready) {
+        writeResponseValid_ = false;
     }
-    refMemory[wordAddr] = word;
-}
-
-uint32_t AXIMemory::debugRead(uint32_t addr) {
-    return memory[addr >> 2] >> ((addr & 0x3) << 3);
+    return std::nullopt;
 }

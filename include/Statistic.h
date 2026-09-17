@@ -1,48 +1,97 @@
-#ifndef STATISTIC_HH
-#define STATISTIC_HH
+#ifndef ZIRCON_SIM_STATISTIC_H
+#define ZIRCON_SIM_STATISTIC_H
 
+#include <array>
 #include <cstdint>
-#include "AXIMemory.h"
-#include "verilated_vcd_c.h"
-#include "VCPU.h"
-#include "Simulator.h"
+#include <string>
+
+namespace zircon::sim {
+
+struct InstructionStatistic {
+    uint64_t alu = 0;
+    uint64_t branch = 0;
+    uint64_t jump = 0;
+    uint64_t load = 0;
+    uint64_t store = 0;
+    uint64_t multiply = 0;
+    uint64_t divide = 0;
+    uint64_t floating = 0;
+    uint64_t system = 0;
+    uint64_t other = 0;
+    uint64_t conditionalBranch = 0;
+    uint64_t call = 0;
+    uint64_t ret = 0;
+    uint64_t indirectJump = 0;
+};
+
+struct PerformanceSnapshot {
+    uint64_t icacheVisit = 0;
+    uint64_t icacheHit = 0;
+    uint64_t icacheMissCycles = 0;
+    uint64_t fqBlockedCycles = 0;
+    uint64_t fqEmptyCycles = 0;
+    uint64_t ftqBlockedCycles = 0;
+    uint64_t integerFreeListBlockedCycles = 0;
+    uint64_t floatingFreeListBlockedCycles = 0;
+    uint64_t dispatchBlockedCycles = 0;
+    uint64_t branch = 0;
+    uint64_t branchFail = 0;
+    uint64_t directJump = 0;
+    uint64_t directJumpFail = 0;
+    uint64_t call = 0;
+    uint64_t callFail = 0;
+    uint64_t ret = 0;
+    uint64_t retFail = 0;
+    uint64_t indirect = 0;
+    uint64_t indirectFail = 0;
+    uint64_t robFullCycles = 0;
+    uint64_t storeBufferFullCycles = 0;
+    uint64_t storeBufferBusyCycles = 0;
+    std::array<uint64_t, 6> issueQueueFullCycles{};
+    std::array<uint64_t, 6> pipelineIssueCycles{};
+    std::array<uint64_t, 6> pipelineOperandWaitCycles{};
+    std::array<uint64_t, 6> pipelineReplayBlockedCycles{};
+    std::array<uint64_t, 6> pipelineExecutionBlockedCycles{};
+    uint64_t divideBusyCycles = 0;
+    std::array<uint64_t, 2> dcacheLoadVisits{};
+    std::array<uint64_t, 2> dcacheLoadHits{};
+    std::array<uint64_t, 2> dcacheLoadMisses{};
+    std::array<uint64_t, 2> dcacheLoadRetries{};
+    uint64_t dcacheStoreVisits = 0;
+    uint64_t dcacheStoreHits = 0;
+    uint64_t dcacheStoreMisses = 0;
+    uint64_t dcacheMissBusyCycles = 0;
+    uint64_t l2InstructionVisits = 0;
+    uint64_t l2InstructionHits = 0;
+    uint64_t l2InstructionMisses = 0;
+    uint64_t l2DataVisits = 0;
+    uint64_t l2DataHits = 0;
+    uint64_t l2DataMisses = 0;
+    uint64_t l2InstructionVictimInsertions = 0;
+    uint64_t l2DataVictimInsertions = 0;
+    uint64_t lowerMemoryReads = 0;
+    uint64_t lowerMemoryWrites = 0;
+    uint64_t l2EngineBusyCycles = 0;
+};
 
 class Statistic {
-    private:
-    uint32_t cycles = 0;
-    uint32_t insts  = 0;
-    // instructiong buffer
-    uint32_t pcRingBuffer[8];
-    uint8_t pcRingBufferIndex = 0;
+  public:
+    void observeInstruction(uint32_t instruction);
+    const InstructionStatistic &instructions() const;
+    void setPerformance(const PerformanceSnapshot &performance);
+    std::string writeMarkdownReport(
+        const std::string &elf,
+        uint64_t cycles,
+        uint64_t retiredInstructions,
+        double elapsedSeconds,
+        double cyclesPerSecond
+    ) const;
 
-
-
-    public:
-    
-    inline void addCycles(uint32_t num) {
-        cycles += num;
-    }
-    inline void addInsts(uint32_t num) {
-        insts += num;
-    }
-    inline uint32_t getCycles() {
-        return cycles;
-    }
-
-    inline double getIPC() {
-        return insts * 1.0 / cycles;
-    }
-    void printPerformance();
-
-    void pcBufferPush(uint32_t pc) {
-        pcRingBuffer[pcRingBufferIndex] = pc;
-        pcRingBufferIndex = (pcRingBufferIndex + 1) % 8;
-    }
-
-    void printLastInstrucions(AXIMemory* mem);
-    void printMarkdownReport(VCPU* cpu, std::string imgName, Simulator* sim);
-
-    
+  private:
+    InstructionStatistic instructions_;
+    PerformanceSnapshot performance_;
 };
+
+} // namespace zircon::sim
 
 #endif
