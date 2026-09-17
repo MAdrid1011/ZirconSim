@@ -80,6 +80,21 @@ std::string grouped(uint64_t value) {
     return result;
 }
 
+std::string csrContext(const VZirconCore &dut) {
+    std::ostringstream stream;
+    stream << "priv=" << std::dec << static_cast<unsigned>(dut.io_debug_privilege) << std::hex
+           << " mstatus=0x" << dut.io_debug_csr_mstatus << " mie=0x" << dut.io_debug_csr_mie
+           << " mip=0x" << dut.io_debug_csr_mip << " medeleg=0x" << dut.io_debug_csr_medeleg
+           << " mideleg=0x" << dut.io_debug_csr_mideleg << " mtvec=0x" << dut.io_debug_csr_mtvec
+           << " mepc=0x" << dut.io_debug_csr_mepc << " mcause=0x" << dut.io_debug_csr_mcause
+           << " mtval=0x" << dut.io_debug_csr_mtval << " stvec=0x" << dut.io_debug_csr_stvec
+           << " sepc=0x" << dut.io_debug_csr_sepc << " scause=0x" << dut.io_debug_csr_scause
+           << " stval=0x" << dut.io_debug_csr_stval << " satp=0x" << dut.io_debug_csr_satp
+           << " frm=0x" << static_cast<unsigned>(dut.io_debug_csr_frm)
+           << " fflags=0x" << static_cast<unsigned>(dut.io_debug_csr_fflags);
+    return stream.str();
+}
+
 std::string hex32(uint32_t value) {
     std::ostringstream output;
     output << "0x" << std::hex << std::setw(8) << std::setfill('0') << value;
@@ -575,6 +590,7 @@ int main(int argc, char **argv) {
                                                       expected.value != retire_value));
                         if (expected.pc != retire_pc || expected.instruction != retire_instruction ||
                             (!synchronize && destinationMismatch)) {
+                            const std::string csr_context = csrContext(dut);
                             progress_reporter.finish();
                             dut.final();
                             closeTrace();
@@ -592,7 +608,7 @@ int main(int argc, char **argv) {
                                 std::cerr << " " << (expected.is_fp ? 'f' : 'x') << std::dec
                                           << static_cast<unsigned>(expected.rd) << "=0x" << std::hex << expected.value;
                             }
-                            std::cerr << std::dec << std::endl;
+                            std::cerr << std::dec << '\n' << "CSR: " << csr_context << std::endl;
                             return 126;
                         }
                         if (retire_write_valid && retire_rd != 0) {
@@ -661,6 +677,7 @@ int main(int argc, char **argv) {
                     progress_instructions.store(retired_instructions, std::memory_order_relaxed);
                 }
                 const uint64_t report_cycles = measured_cycles == 0 ? cycle + 1 : measured_cycles;
+                const std::string csr_context = csrContext(dut);
                 progress_reporter.finish();
                 const RunMetrics metrics = collectMetrics(report_cycles, cycle + 1);
                 const std::string report = writeReport(report_cycles, metrics);
@@ -670,7 +687,8 @@ int main(int argc, char **argv) {
                     printSummary(RunOutcome::Stall, "No instruction retired within the stall window", options,
                                  report_cycles, metrics, report,
                                  grouped(cycles_without_retirement) + " cycles without retirement; last PC " +
-                                     hex32(last_retire_pc) + "; ROB head " + hex32(dut.io_debug_robHeadPc),
+                                     hex32(last_retire_pc) + "; ROB head " + hex32(dut.io_debug_robHeadPc) +
+                                     "; CSR: " + csr_context,
                                  color);
                 } else {
                     std::cout << "{\"status\":\"stalled\",\"cycles\":" << report_cycles
@@ -678,7 +696,8 @@ int main(int argc, char **argv) {
                               << ",\"lastRetirePc\":" << last_retire_pc
                               << ",\"robHeadValid\":" << static_cast<unsigned>(dut.io_debug_robHeadValid)
                               << ",\"robHeadComplete\":" << static_cast<unsigned>(dut.io_debug_robHeadComplete)
-                              << ",\"robHeadPc\":" << dut.io_debug_robHeadPc;
+                              << ",\"robHeadPc\":" << dut.io_debug_robHeadPc << ",\"csr\":\"" << csr_context
+                              << "\"";
                     printJsonMetrics(metrics);
                     std::cout << ",\"report\":\"" << report << "\"}" << std::endl;
                 }

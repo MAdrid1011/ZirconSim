@@ -67,7 +67,8 @@ std::optional<SpikeCommit> parseSpikeCommitLine(const std::string &line) {
 
 class SpikeReference::Impl : public simif_t {
   public:
-    Impl(const SparseMemory &memory, uint32_t entry) : memory_(memory), isa_("RV32IMAF_Zicsr_Zifencei_Zicntr", "M") {
+    Impl(const SparseMemory &memory, uint32_t entry)
+        : memory_(memory), isa_("RV32IMAF_Zicsr_Zifencei_Zaamo_Zalrsc_Zicntr_Zihpm", "M") {
         debug_mmu = nullptr;
         log_.reset(std::fopen("/dev/null", "w"));
         if (log_ == nullptr) {
@@ -80,6 +81,10 @@ class SpikeReference::Impl : public simif_t {
     }
 
     char *addr_to_mem(reg_t) override { return nullptr; }
+
+    bool reservable(reg_t address) override {
+        return address >= 0x80000000ULL && address < 0xa0000000ULL;
+    }
 
     bool mmio_load(reg_t address, size_t size, uint8_t *bytes) override {
         if (address > std::numeric_limits<uint32_t>::max() || size > sizeof(uint64_t) ||
