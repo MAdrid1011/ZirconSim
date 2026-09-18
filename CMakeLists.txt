@@ -30,7 +30,7 @@ if(ZIRCON_SIM_ENABLE_VCD)
     set(ZIRCON_VERILATE_TRACE TRACE_VCD)
     set(ZIRCON_VERILATOR_SPLIT_ARGS)
 else()
-    set(ZIRCON_VERILATOR_SPLIT_ARGS --output-split 100000)
+    set(ZIRCON_VERILATOR_SPLIT_ARGS --output-split 160000)
 endif()
 target_link_libraries(zircon-sim PRIVATE Threads::Threads PkgConfig::SPIKE)
 set_target_properties(zircon-sim PROPERTIES
