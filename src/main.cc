@@ -4,6 +4,7 @@
 #endif
 
 #include <array>
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -18,7 +19,9 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <unistd.h>
+#include <vector>
 
 #include "AXIMemory.h"
 #include "ElfImage.h"
@@ -68,6 +71,18 @@ struct Options {
     bool progress = true;
     bool json = false;
     bool color = true;
+    bool branch_profile = false;
+};
+
+struct BranchProfileEntry {
+    uint32_t instruction = 0;
+    uint64_t executions = 0;
+    uint64_t mispredictions = 0;
+    uint64_t taken = 0;
+};
+
+struct PendingBranch {
+    uint32_t pc = 0;
 };
 
 const char *ansi(bool enabled, const char *code) { return enabled ? code : ""; }
@@ -295,6 +310,8 @@ Options parseOptions(int argc, char **argv) {
             options.json = true;
         } else if (argument == "--no-color") {
             options.color = false;
+        } else if (argument == "--branch-profile") {
+            options.branch_profile = true;
         } else {
             throw std::invalid_argument("unknown option: " + argument);
         }
@@ -311,6 +328,33 @@ Options parseOptions(int argc, char **argv) {
     }
 #endif
     return options;
+}
+
+void printBranchProfile(const std::unordered_map<uint32_t, BranchProfileEntry> &profile) {
+    std::vector<std::pair<uint32_t, BranchProfileEntry>> entries(profile.begin(), profile.end());
+    std::sort(entries.begin(), entries.end(), [](const auto &left, const auto &right) {
+        if (left.second.mispredictions != right.second.mispredictions) {
+            return left.second.mispredictions > right.second.mispredictions;
+        }
+        return left.second.executions > right.second.executions;
+    });
+
+    std::cerr << "\nConditional branch profile (top misprediction PCs)\n"
+              << "PC          instruction executions mispredict accuracy  taken\n";
+    const size_t limit = std::min<size_t>(entries.size(), 32);
+    for (size_t index = 0; index < limit; ++index) {
+        const auto &[pc, entry] = entries[index];
+        const double accuracy = entry.executions == 0
+                                    ? 0.0
+                                    : 100.0 * static_cast<double>(entry.executions - entry.mispredictions) /
+                                          static_cast<double>(entry.executions);
+        const double taken = entry.executions == 0
+                                 ? 0.0
+                                 : 100.0 * static_cast<double>(entry.taken) / static_cast<double>(entry.executions);
+        std::cerr << hex32(pc) << "  " << hex32(entry.instruction) << ' ' << std::setw(10) << entry.executions << ' '
+                  << std::setw(10) << entry.mispredictions << ' ' << std::fixed << std::setprecision(2)
+                  << std::setw(7) << accuracy << "% " << std::setw(6) << taken << "%\n";
+    }
 }
 
 bool waveEnabled(const Options &options, uint64_t cycle) {
@@ -348,6 +392,9 @@ zircon::sim::PerformanceSnapshot readPerformance(const VZirconCore &dut) {
     result.retFail = dut.io_debug_performance_retFail;
     result.indirect = dut.io_debug_performance_indirect;
     result.indirectFail = dut.io_debug_performance_indirectFail;
+    result.loopTraining = dut.io_debug_performance_loopTraining;
+    result.loopProvider = dut.io_debug_performance_loopProvider;
+    result.loopCorrect = dut.io_debug_performance_loopCorrect;
     result.robFullCycles = dut.io_debug_performance_robFullCycles;
     result.storeBufferFullCycles = dut.io_debug_performance_storeBufferFullCycles;
     result.storeBufferBusyCycles = dut.io_debug_performance_storeBufferBusyCycles;
@@ -395,6 +442,34 @@ zircon::sim::PerformanceSnapshot readPerformance(const VZirconCore &dut) {
     result.dcacheLoadRetries = {
         dut.io_debug_performance_dcacheLoadRetries_0,
         dut.io_debug_performance_dcacheLoadRetries_1,
+    };
+    result.dcacheLoadRetryTranslation = {
+        dut.io_debug_performance_dcacheLoadRetryTranslation_0,
+        dut.io_debug_performance_dcacheLoadRetryTranslation_1,
+    };
+    result.dcacheLoadRetryForwardBlocked = {
+        dut.io_debug_performance_dcacheLoadRetryForwardBlocked_0,
+        dut.io_debug_performance_dcacheLoadRetryForwardBlocked_1,
+    };
+    result.dcacheLoadRetryUncachedOrder = {
+        dut.io_debug_performance_dcacheLoadRetryUncachedOrder_0,
+        dut.io_debug_performance_dcacheLoadRetryUncachedOrder_1,
+    };
+    result.dcacheLoadRetryStaleLookup = {
+        dut.io_debug_performance_dcacheLoadRetryStaleLookup_0,
+        dut.io_debug_performance_dcacheLoadRetryStaleLookup_1,
+    };
+    result.dcacheLoadRetryMissBusy = {
+        dut.io_debug_performance_dcacheLoadRetryMissBusy_0,
+        dut.io_debug_performance_dcacheLoadRetryMissBusy_1,
+    };
+    result.dcacheLoadRetryStoreConflict = {
+        dut.io_debug_performance_dcacheLoadRetryStoreConflict_0,
+        dut.io_debug_performance_dcacheLoadRetryStoreConflict_1,
+    };
+    result.dcacheLoadRetryLaneConflict = {
+        dut.io_debug_performance_dcacheLoadRetryLaneConflict_0,
+        dut.io_debug_performance_dcacheLoadRetryLaneConflict_1,
     };
     result.dcacheStoreVisits = dut.io_debug_performance_dcacheStoreVisits;
     result.dcacheStoreHits = dut.io_debug_performance_dcacheStoreHits;
@@ -451,6 +526,8 @@ int main(int argc, char **argv) {
         bool reference_complete = false;
         uint32_t last_retire_pc = image.entry();
         uint64_t simulation_time = 0;
+        std::unordered_map<uint32_t, BranchProfileEntry> branch_profile;
+        std::optional<PendingBranch> pending_branch;
 #ifdef ZIRCON_ENABLE_VCD
         if (options.wave) {
             Verilated::traceEverOn(true);
@@ -542,11 +619,13 @@ int main(int argc, char **argv) {
                     uint8_t retire_rd = 0;
                     bool retire_is_fp = false;
                     bool retire_write_valid = false;
+                    bool retire_mispredicted = false;
                     uint32_t retire_value = 0;
                     switch (lane) {
                     case 0:
                         retire_pc = dut.io_debug_retire_0_pc;
                         retire_instruction = dut.io_debug_retire_0_instruction;
+                        retire_mispredicted = dut.io_debug_retire_0_mispredicted;
                         retire_rd = dut.io_debug_retire_0_rd;
                         retire_is_fp = dut.io_debug_retire_0_isFp;
                         retire_write_valid = dut.io_debug_retire_0_writeValid;
@@ -555,6 +634,7 @@ int main(int argc, char **argv) {
                     case 1:
                         retire_pc = dut.io_debug_retire_1_pc;
                         retire_instruction = dut.io_debug_retire_1_instruction;
+                        retire_mispredicted = dut.io_debug_retire_1_mispredicted;
                         retire_rd = dut.io_debug_retire_1_rd;
                         retire_is_fp = dut.io_debug_retire_1_isFp;
                         retire_write_valid = dut.io_debug_retire_1_writeValid;
@@ -563,6 +643,7 @@ int main(int argc, char **argv) {
                     case 2:
                         retire_pc = dut.io_debug_retire_2_pc;
                         retire_instruction = dut.io_debug_retire_2_instruction;
+                        retire_mispredicted = dut.io_debug_retire_2_mispredicted;
                         retire_rd = dut.io_debug_retire_2_rd;
                         retire_is_fp = dut.io_debug_retire_2_isFp;
                         retire_write_valid = dut.io_debug_retire_2_writeValid;
@@ -570,6 +651,19 @@ int main(int argc, char **argv) {
                         break;
                     }
                     retired = true;
+                    if (options.branch_profile) {
+                        if (pending_branch.has_value()) {
+                            branch_profile[pending_branch->pc].taken += retire_pc != pending_branch->pc + 4;
+                            pending_branch.reset();
+                        }
+                        if ((retire_instruction & 0x7fu) == 0x63u) {
+                            auto &entry = branch_profile[retire_pc];
+                            entry.instruction = retire_instruction;
+                            ++entry.executions;
+                            entry.mispredictions += retire_mispredicted;
+                            pending_branch = PendingBranch{retire_pc};
+                        }
+                    }
                     ++retired_instructions;
                     if (measured_cycles == 0) {
                         statistic.observeInstruction(retire_instruction);
@@ -657,6 +751,13 @@ int main(int argc, char **argv) {
                 progress_reporter.finish();
                 const RunMetrics metrics = collectMetrics(report_cycles, cycle + 1);
                 const std::string report = writeReport(report_cycles, metrics);
+                if (options.branch_profile) {
+                    printBranchProfile(branch_profile);
+                    const auto performance = measured_performance.value_or(readPerformance(dut));
+                    std::cerr << "Loop predictor: training=" << performance.loopTraining
+                              << " provider=" << performance.loopProvider
+                              << " correct=" << performance.loopCorrect << '\n';
+                }
                 dut.final();
                 closeTrace();
                 if (human_output) {

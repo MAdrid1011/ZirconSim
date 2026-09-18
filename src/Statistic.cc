@@ -178,7 +178,9 @@ std::string Statistic::writeMarkdownReport(
            << "| Ret | " << instructions_.ret << " | " << retCorrect << " | "
            << ratio(retCorrect, instructions_.ret) << "% |\n"
            << "| Indirect Jump | " << instructions_.indirectJump << " | " << indirectCorrect << " | "
-           << ratio(indirectCorrect, instructions_.indirectJump) << "% |\n";
+           << ratio(indirectCorrect, instructions_.indirectJump) << "% |\n"
+           << "| Loop Provider | " << performance_.loopProvider << " | " << performance_.loopCorrect << " | "
+           << ratio(performance_.loopCorrect, performance_.loopProvider) << "% |\n";
 
     output << "## 高速缓存\n"
            << "### 缓存命中情况\n"
@@ -234,6 +236,24 @@ std::string Statistic::writeMarkdownReport(
            << "| DCache Victim 插入 L2 | " << performance_.l2DataVictimInsertions << " |\n"
            << "| L2 下级内存读 | " << performance_.lowerMemoryReads << " |\n"
            << "| L2 下级内存写回 | " << performance_.lowerMemoryWrites << " |\n";
+
+    output << "\n### DCache 重试原因\n"
+           << "| 原因 | LS0 | LS1 |\n"
+           << "| --- | --- | --- |\n"
+           << "| TLB缺失 | " << performance_.dcacheLoadRetryTranslation[0] << " | "
+           << performance_.dcacheLoadRetryTranslation[1] << " |\n"
+           << "| Store Queue/Buffer转发阻塞 | " << performance_.dcacheLoadRetryForwardBlocked[0] << " | "
+           << performance_.dcacheLoadRetryForwardBlocked[1] << " |\n"
+           << "| 非缓存顺序授权 | " << performance_.dcacheLoadRetryUncachedOrder[0] << " | "
+           << performance_.dcacheLoadRetryUncachedOrder[1] << " |\n"
+           << "| RAM查询过期 | " << performance_.dcacheLoadRetryStaleLookup[0] << " | "
+           << performance_.dcacheLoadRetryStaleLookup[1] << " |\n"
+           << "| Miss Unit忙 | " << performance_.dcacheLoadRetryMissBusy[0] << " | "
+           << performance_.dcacheLoadRetryMissBusy[1] << " |\n"
+           << "| Store通路冲突 | " << performance_.dcacheLoadRetryStoreConflict[0] << " | "
+           << performance_.dcacheLoadRetryStoreConflict[1] << " |\n"
+           << "| 双Load通道仲裁 | " << performance_.dcacheLoadRetryLaneConflict[0] << " | "
+           << performance_.dcacheLoadRetryLaneConflict[1] << " |\n";
 
     output << "## 流水线停顿\n"
            << "### 前端\n"

@@ -44,6 +44,9 @@ struct PerformanceSnapshot {
     uint64_t retFail = 0;
     uint64_t indirect = 0;
     uint64_t indirectFail = 0;
+    uint64_t loopTraining = 0;
+    uint64_t loopProvider = 0;
+    uint64_t loopCorrect = 0;
     uint64_t robFullCycles = 0;
     uint64_t storeBufferFullCycles = 0;
     uint64_t storeBufferBusyCycles = 0;
@@ -57,6 +60,13 @@ struct PerformanceSnapshot {
     std::array<uint64_t, 2> dcacheLoadHits{};
     std::array<uint64_t, 2> dcacheLoadMisses{};
     std::array<uint64_t, 2> dcacheLoadRetries{};
+    std::array<uint64_t, 2> dcacheLoadRetryTranslation{};
+    std::array<uint64_t, 2> dcacheLoadRetryForwardBlocked{};
+    std::array<uint64_t, 2> dcacheLoadRetryUncachedOrder{};
+    std::array<uint64_t, 2> dcacheLoadRetryStaleLookup{};
+    std::array<uint64_t, 2> dcacheLoadRetryMissBusy{};
+    std::array<uint64_t, 2> dcacheLoadRetryStoreConflict{};
+    std::array<uint64_t, 2> dcacheLoadRetryLaneConflict{};
     uint64_t dcacheStoreVisits = 0;
     uint64_t dcacheStoreHits = 0;
     uint64_t dcacheStoreMisses = 0;
