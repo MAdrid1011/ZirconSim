@@ -8,6 +8,8 @@ pkg_check_modules(SPIKE REQUIRED IMPORTED_TARGET riscv-riscv)
 find_program(VERILATOR_EXECUTABLE verilator REQUIRED)
 
 option(ZIRCON_SIM_ENABLE_VCD "Build zircon-sim with bounded VCD tracing support" OFF)
+set(ZIRCON_VERILATOR_BUILD_JOBS 4 CACHE STRING
+    "Parallel jobs for compiling the Verilated model")
 
 add_executable(zircon-sim
     src/AXIMemory.cc
@@ -49,7 +51,7 @@ add_custom_command(
         "${VERILATOR_EXECUTABLE}"
         --cc
         --build
-        --build-jobs 1
+        --build-jobs "${ZIRCON_VERILATOR_BUILD_JOBS}"
         --prefix VZirconCore
         --top-module ZirconCore
         --Mdir "${ZIRCON_VERILATED_DIR}"
