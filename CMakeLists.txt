@@ -5,6 +5,7 @@ find_package(verilator CONFIG REQUIRED HINTS
 find_package(Threads REQUIRED)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(SPIKE REQUIRED IMPORTED_TARGET riscv-riscv)
+find_program(VERILATOR_EXECUTABLE verilator REQUIRED)
 
 option(ZIRCON_SIM_ENABLE_VCD "Build zircon-sim with bounded VCD tracing support" OFF)
 
@@ -19,41 +20,77 @@ target_compile_features(zircon-sim PRIVATE cxx_std_20)
 target_compile_options(zircon-sim PRIVATE
     -Wall
     -Wextra
-    -Wno-sign-compare
-    -Wno-unused-but-set-variable
-    -Wno-unused-parameter
-    -Wno-unused-variable
+    -Werror
 )
-target_include_directories(zircon-sim PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include")
+set(ZIRCON_VERILATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/rtl")
+set(ZIRCON_VERILATED_MODEL "${ZIRCON_VERILATED_DIR}/libVZirconCore.a")
+set(ZIRCON_VERILATED_RUNTIME "${ZIRCON_VERILATED_DIR}/libverilated.a")
+set(ZIRCON_VERILATOR_TRACE_ARGS)
 if(ZIRCON_SIM_ENABLE_VCD)
     target_compile_definitions(zircon-sim PRIVATE ZIRCON_ENABLE_VCD=1)
-    set(ZIRCON_VERILATE_TRACE TRACE_VCD)
-    set(ZIRCON_VERILATOR_SPLIT_ARGS)
-else()
-    set(ZIRCON_VERILATOR_SPLIT_ARGS --output-split 160000)
+    list(APPEND ZIRCON_VERILATOR_TRACE_ARGS --trace-vcd)
 endif()
-target_link_libraries(zircon-sim PRIVATE Threads::Threads PkgConfig::SPIKE)
+find_program(CCACHE_EXECUTABLE ccache)
+if(NOT CCACHE_EXECUTABLE)
+    set(CCACHE_EXECUTABLE "")
+endif()
+
+add_custom_command(
+    OUTPUT
+        "${ZIRCON_VERILATED_MODEL}"
+        "${ZIRCON_VERILATED_RUNTIME}"
+        "${ZIRCON_VERILATED_DIR}/VZirconCore.h"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${ZIRCON_VERILATED_DIR}"
+    COMMAND "${CMAKE_COMMAND}" -E env
+        "VERILATOR_ROOT=${VERILATOR_ROOT}"
+        "CXX=${CMAKE_CXX_COMPILER}"
+        "OBJCACHE=${CCACHE_EXECUTABLE}"
+        "MAKEFLAGS="
+        "${VERILATOR_EXECUTABLE}"
+        --cc
+        --build
+        --build-jobs 1
+        --prefix VZirconCore
+        --top-module ZirconCore
+        --Mdir "${ZIRCON_VERILATED_DIR}"
+        -y "${ZIRCON_RTL_DIR}"
+        -Wall
+        --output-split 160000
+        ${ZIRCON_VERILATOR_TRACE_ARGS}
+        -CFLAGS "-std=c++20 -O3"
+        "${ZIRCON_RTL_TOP}"
+    DEPENDS
+        "${ZIRCON_RTL_TOP}"
+        "${VERILATOR_EXECUTABLE}"
+    COMMENT "Building the Verilated ZirconCore model"
+    VERBATIM
+)
+add_custom_target(zircon-verilated-model
+    DEPENDS
+        "${ZIRCON_VERILATED_MODEL}"
+        "${ZIRCON_VERILATED_RUNTIME}"
+        "${ZIRCON_VERILATED_DIR}/VZirconCore.h"
+)
+add_dependencies(zircon-verilated-model zircon-rtl)
+add_dependencies(zircon-sim zircon-verilated-model)
+
+target_include_directories(zircon-sim PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/include"
+    "${ZIRCON_VERILATED_DIR}"
+)
+target_include_directories(zircon-sim SYSTEM PRIVATE
+    "${VERILATOR_ROOT}/include"
+    "${VERILATOR_ROOT}/include/vltstd"
+)
+target_link_libraries(zircon-sim PRIVATE
+    "${ZIRCON_VERILATED_MODEL}"
+    "${ZIRCON_VERILATED_RUNTIME}"
+    Threads::Threads
+    PkgConfig::SPIKE
+)
 set_target_properties(zircon-sim PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
-
-set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
-    "${CMAKE_CURRENT_BINARY_DIR}/rtl/VZirconCore.json"
-)
-verilate(zircon-sim
-    ${ZIRCON_VERILATE_TRACE}
-    PREFIX VZirconCore
-    TOP_MODULE ZirconCore
-    DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/rtl"
-    INCLUDE_DIRS "${ZIRCON_RTL_DIR}"
-    VERILATOR_ARGS
-        -Wall
-        -Wno-fatal
-        -Wno-UNUSEDSIGNAL
-        ${ZIRCON_VERILATOR_SPLIT_ARGS}
-    SOURCES "${ZIRCON_RTL_TOP}"
-)
-add_dependencies(zircon-sim zircon-rtl)
 
 add_executable(zircon-sim-unit
     src/ElfImage.cc
@@ -78,6 +115,9 @@ set(ZIRCON_TEST_ELF "" CACHE FILEPATH
 
 find_program(MAKE_EXECUTABLE make)
 if(MAKE_EXECUTABLE AND EXISTS "${ZIRCON_RV_SOFTWARE_DIR}/coremark/Makefile")
+    set(ZIRCON_COREMARK_BUILD_ELF
+        "${ZIRCON_RV_SOFTWARE_DIR}/coremark/build/coremark-i30-rv32imaf_zicsr_zifencei-ilp32f.elf"
+    )
     set(ZIRCON_COREMARK_ELF
         "${ZIRCON_RV_SOFTWARE_DIR}/coremark/build/coremark-rv32imaf_zicsr_zifencei-ilp32f.elf"
     )
@@ -93,6 +133,10 @@ if(MAKE_EXECUTABLE AND EXISTS "${ZIRCON_RV_SOFTWARE_DIR}/coremark/Makefile")
     add_custom_command(
         OUTPUT "${ZIRCON_COREMARK_ELF}"
         COMMAND "${MAKE_EXECUTABLE}" -C "${ZIRCON_RV_SOFTWARE_DIR}/coremark"
+            "ITERATIONS=30"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+            "${ZIRCON_COREMARK_BUILD_ELF}"
+            "${ZIRCON_COREMARK_ELF}"
         DEPENDS ${ZIRCON_COREMARK_SOURCES}
         COMMENT "Building the RV32 CoreMark benchmark"
         VERBATIM
@@ -102,7 +146,7 @@ if(MAKE_EXECUTABLE AND EXISTS "${ZIRCON_RV_SOFTWARE_DIR}/coremark/Makefile")
         COMMAND "$<TARGET_FILE:zircon-sim>"
             --elf "${ZIRCON_COREMARK_ELF}"
             --seed 1
-            --max-cycles 5000000
+            --max-cycles 10000000
             --stall-cycles 10000
         DEPENDS zircon-sim zircon-coremark-software
         WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
