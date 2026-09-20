@@ -1,5 +1,7 @@
 #include "Statistic.h"
 
+#include "Checkpoint.h"
+
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -20,24 +22,17 @@ void writeCycleValue(std::ofstream &output, uint64_t count, uint64_t cycles) {
     output << count << " (" << ratio(count, cycles) << "%)";
 }
 
-void writeCache(
-    std::ofstream &output,
-    const char *name,
-    uint64_t visits,
-    uint64_t hits,
-    uint64_t misses,
-    uint64_t retries
-) {
-    output << "| " << name << " | " << visits << " | " << hits << " | " << misses << " | "
-           << retries << " | " << ratio(hits, hits + misses) << "% |\n";
+void writeCache(std::ofstream &output, const char *name, uint64_t visits, uint64_t hits, uint64_t misses,
+                uint64_t retries) {
+    output << "| " << name << " | " << visits << " | " << hits << " | " << misses << " | " << retries << " | "
+           << ratio(hits, hits + misses) << "% |\n";
 }
 
 std::string reportName(const std::string &elf) {
     std::string name = std::filesystem::path(elf).stem().string();
     for (char &character : name) {
-        const bool allowed = (character >= 'a' && character <= 'z') ||
-            (character >= 'A' && character <= 'Z') || (character >= '0' && character <= '9') ||
-            character == '-' || character == '_';
+        const bool allowed = (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') ||
+                             (character >= '0' && character <= '9') || character == '-' || character == '_';
         if (!allowed) {
             character = '_';
         }
@@ -54,82 +49,83 @@ void Statistic::observeInstruction(uint32_t instruction) {
     const uint32_t rs1 = instruction >> 15 & 0x1f;
     const uint32_t funct7 = instruction >> 25;
     switch (opcode) {
-        case 0x03:
-        case 0x07:
-            ++instructions_.load;
-            break;
-        case 0x23:
-        case 0x27:
-            ++instructions_.store;
-            break;
-        case 0x63:
-            ++instructions_.branch;
-            ++instructions_.conditionalBranch;
-            break;
-        case 0x6f:
-            ++instructions_.jump;
-            if (rd == 1 || rd == 5) {
-                ++instructions_.call;
-            }
-            break;
-        case 0x67:
-            ++instructions_.jump;
-            if (rd == 0 && (rs1 == 1 || rs1 == 5)) {
-                ++instructions_.ret;
-            } else if (rd == 1 || rd == 5) {
-                ++instructions_.call;
+    case 0x03:
+    case 0x07:
+        ++instructions_.load;
+        break;
+    case 0x23:
+    case 0x27:
+        ++instructions_.store;
+        break;
+    case 0x63:
+        ++instructions_.branch;
+        ++instructions_.conditionalBranch;
+        break;
+    case 0x6f:
+        ++instructions_.jump;
+        if (rd == 1 || rd == 5) {
+            ++instructions_.call;
+        }
+        break;
+    case 0x67:
+        ++instructions_.jump;
+        if (rd == 0 && (rs1 == 1 || rs1 == 5)) {
+            ++instructions_.ret;
+        } else if (rd == 1 || rd == 5) {
+            ++instructions_.call;
+        } else {
+            ++instructions_.indirectJump;
+        }
+        break;
+    case 0x33:
+        if (funct7 == 1) {
+            if (funct3 < 4) {
+                ++instructions_.multiply;
             } else {
-                ++instructions_.indirectJump;
+                ++instructions_.divide;
             }
-            break;
-        case 0x33:
-            if (funct7 == 1) {
-                if (funct3 < 4) {
-                    ++instructions_.multiply;
-                } else {
-                    ++instructions_.divide;
-                }
-            } else {
-                ++instructions_.alu;
-            }
-            break;
-        case 0x53:
-        case 0x43:
-        case 0x47:
-        case 0x4b:
-        case 0x4f:
-            ++instructions_.floating;
-            break;
-        case 0x0f:
-        case 0x73:
-            ++instructions_.system;
-            break;
-        case 0x13:
-        case 0x17:
-        case 0x37:
+        } else {
             ++instructions_.alu;
-            break;
-        default:
-            ++instructions_.other;
-            break;
+        }
+        break;
+    case 0x53:
+    case 0x43:
+    case 0x47:
+    case 0x4b:
+    case 0x4f:
+        ++instructions_.floating;
+        break;
+    case 0x0f:
+    case 0x73:
+        ++instructions_.system;
+        break;
+    case 0x13:
+    case 0x17:
+    case 0x37:
+        ++instructions_.alu;
+        break;
+    default:
+        ++instructions_.other;
+        break;
     }
 }
 
-const InstructionStatistic &Statistic::instructions() const {
-    return instructions_;
+const InstructionStatistic &Statistic::instructions() const { return instructions_; }
+
+void Statistic::setPerformance(const PerformanceSnapshot &performance) { performance_ = performance; }
+
+void Statistic::save(CheckpointWriter &writer) const {
+    writer.write(instructions_);
+    writer.write(performance_);
 }
 
-void Statistic::setPerformance(const PerformanceSnapshot &performance) {
-    performance_ = performance;
+void Statistic::restore(CheckpointReader &reader) {
+    instructions_ = reader.read<InstructionStatistic>();
+    performance_ = reader.read<PerformanceSnapshot>();
 }
 
-std::string Statistic::writeMarkdownReport(
-    const std::string &elf,
-    uint64_t cycles,
-    uint64_t retiredInstructions,
-    double elapsedSeconds,
-    double cyclesPerSecond
-) const {
+std::string Statistic::writeMarkdownReport(const std::string &elf, uint64_t cycles, uint64_t retiredInstructions,
+                                           double elapsedSeconds, double cyclesPerSecond) const {
     const std::filesystem::path directory = "reports";
     std::filesystem::create_directories(directory);
     const std::filesystem::path path = directory / ("report-" + reportName(elf) + ".md");
@@ -142,9 +138,8 @@ std::string Statistic::writeMarkdownReport(
     output << "## 程序基本情况\n"
            << "| 程序名 | 总周期数 | 总指令数 | IPC | 仿真时间（秒） | 仿真速度（周期/秒） |\n"
            << "| --- | --- | --- | --- | --- | --- |\n"
-           << "| " << std::filesystem::path(elf).filename().string() << " | " << cycles << " | "
-           << retiredInstructions << " | " << ipc << " | " << elapsedSeconds << " | "
-           << cyclesPerSecond << " |\n";
+           << "| " << std::filesystem::path(elf).filename().string() << " | " << cycles << " | " << retiredInstructions
+           << " | " << ipc << " | " << elapsedSeconds << " | " << cyclesPerSecond << " |\n";
 
     output << "## 指令统计\n"
            << "| 指令类型 | 总数 | 占比 |\n"
@@ -159,8 +154,8 @@ std::string Statistic::writeMarkdownReport(
     writeCount(output, "System", instructions_.system, retiredInstructions);
     writeCount(output, "Other", instructions_.other, retiredInstructions);
 
-    const uint64_t directJump = instructions_.jump - instructions_.call - instructions_.ret -
-        instructions_.indirectJump;
+    const uint64_t directJump =
+        instructions_.jump - instructions_.call - instructions_.ret - instructions_.indirectJump;
     const uint64_t branchCorrect = instructions_.conditionalBranch - performance_.branchFail;
     const uint64_t directJumpCorrect = directJump - performance_.directJumpFail;
     const uint64_t callCorrect = instructions_.call - performance_.callFail;
@@ -175,8 +170,8 @@ std::string Statistic::writeMarkdownReport(
            << ratio(directJumpCorrect, directJump) << "% |\n"
            << "| Call | " << instructions_.call << " | " << callCorrect << " | "
            << ratio(callCorrect, instructions_.call) << "% |\n"
-           << "| Ret | " << instructions_.ret << " | " << retCorrect << " | "
-           << ratio(retCorrect, instructions_.ret) << "% |\n"
+           << "| Ret | " << instructions_.ret << " | " << retCorrect << " | " << ratio(retCorrect, instructions_.ret)
+           << "% |\n"
            << "| Indirect Jump | " << instructions_.indirectJump << " | " << indirectCorrect << " | "
            << ratio(indirectCorrect, instructions_.indirectJump) << "% |\n"
            << "| Loop Provider | " << performance_.loopProvider << " | " << performance_.loopCorrect << " | "
@@ -186,49 +181,19 @@ std::string Statistic::writeMarkdownReport(
            << "### 缓存命中情况\n"
            << "| 高速缓存通道 | 访问次数 | 命中数 | 缺失数 | 重试数 | 命中率 |\n"
            << "| --- | --- | --- | --- | --- | --- |\n";
-    writeCache(
-        output,
-        "ICache 取指",
-        performance_.icacheVisit,
-        performance_.icacheHit,
-        performance_.icacheVisit - performance_.icacheHit,
-        0
-    );
+    writeCache(output, "ICache 取指", performance_.icacheVisit, performance_.icacheHit,
+               performance_.icacheVisit - performance_.icacheHit, 0);
     for (size_t lane = 0; lane < performance_.dcacheLoadVisits.size(); ++lane) {
         const char *name = lane == 0 ? "DCache LS0 Load" : "DCache LS1 Load";
-        writeCache(
-            output,
-            name,
-            performance_.dcacheLoadVisits[lane],
-            performance_.dcacheLoadHits[lane],
-            performance_.dcacheLoadMisses[lane],
-            performance_.dcacheLoadRetries[lane]
-        );
+        writeCache(output, name, performance_.dcacheLoadVisits[lane], performance_.dcacheLoadHits[lane],
+                   performance_.dcacheLoadMisses[lane], performance_.dcacheLoadRetries[lane]);
     }
-    writeCache(
-        output,
-        "DCache Committed Store",
-        performance_.dcacheStoreVisits,
-        performance_.dcacheStoreHits,
-        performance_.dcacheStoreMisses,
-        0
-    );
-    writeCache(
-        output,
-        "L2 ICache 请求",
-        performance_.l2InstructionVisits,
-        performance_.l2InstructionHits,
-        performance_.l2InstructionMisses,
-        0
-    );
-    writeCache(
-        output,
-        "L2 DCache 请求",
-        performance_.l2DataVisits,
-        performance_.l2DataHits,
-        performance_.l2DataMisses,
-        0
-    );
+    writeCache(output, "DCache Committed Store", performance_.dcacheStoreVisits, performance_.dcacheStoreHits,
+               performance_.dcacheStoreMisses, 0);
+    writeCache(output, "L2 ICache 请求", performance_.l2InstructionVisits, performance_.l2InstructionHits,
+               performance_.l2InstructionMisses, 0);
+    writeCache(output, "L2 DCache 请求", performance_.l2DataVisits, performance_.l2DataHits, performance_.l2DataMisses,
+               0);
     output << "\n### 缓存替换情况\n"
            << "| L2/下级内存流量 | 次数 |\n"
            << "| --- | --- |\n"
@@ -276,8 +241,8 @@ std::string Statistic::writeMarkdownReport(
            << "| 停顿原因 | 停顿周期数 | 停顿率 |\n"
            << "| --- | --- | --- |\n";
     static constexpr std::array<const char *, 6> queueNames = {
-        "Arith0 IQ占满", "Arith1 IQ占满", "MixArith IQ占满",
-        "LS0 Load IQ占满", "LS1 Load/Store Address IQ占满", "Store Data IQ占满",
+        "Arith0 IQ占满",     "Arith1 IQ占满", "MixArith IQ占满", "LS0 Load IQ占满", "LS1 Load/Store Address IQ占满",
+        "Store Data IQ占满",
     };
     static constexpr std::array<size_t, 6> queueIndices = {0, 1, 2, 3, 4, 5};
     for (size_t index = 0; index < queueNames.size(); ++index) {

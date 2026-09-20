@@ -7,6 +7,9 @@
 
 namespace zircon::sim {
 
+class CheckpointReader;
+class CheckpointWriter;
+
 struct InstructionStatistic {
     uint64_t alu = 0;
     uint64_t branch = 0;
@@ -89,13 +92,10 @@ class Statistic {
     void observeInstruction(uint32_t instruction);
     const InstructionStatistic &instructions() const;
     void setPerformance(const PerformanceSnapshot &performance);
-    std::string writeMarkdownReport(
-        const std::string &elf,
-        uint64_t cycles,
-        uint64_t retiredInstructions,
-        double elapsedSeconds,
-        double cyclesPerSecond
-    ) const;
+    void save(CheckpointWriter &writer) const;
+    void restore(CheckpointReader &reader);
+    std::string writeMarkdownReport(const std::string &elf, uint64_t cycles, uint64_t retiredInstructions,
+                                    double elapsedSeconds, double cyclesPerSecond) const;
 
   private:
     InstructionStatistic instructions_;
