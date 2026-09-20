@@ -33,6 +33,55 @@ separate waveform build with `-DZIRCON_SIM_ENABLE_VCD=ON`, then use `--wave`
 with `--wave-start` and `--wave-cycles` to keep the dump window bounded. Long
 simulations reject an unbounded waveform request.
 
+The supported Linux entry point lives at the repository root and selects the
+validated build, PGO, differential-test, checkpoint, logging, and UART settings:
+
+```sh
+make -C RV-Software/linux-system linux
+```
+
+It computes a fingerprint over the RTL, simulator, build configuration, tool
+versions, and Linux payload. A missing or stale profile triggers a 20-million-
+cycle differential PGO training run; an unchanged profile is reused. The final
+simulator uses Release `O3`, ThinLTO, native host instructions, five Verilator
+runtime threads, and four model build jobs. This default PGO path requires
+Clang/AppleClang and a matching `llvm-profdata`; the launcher selects
+`clang++` from `PATH` when `CXX` is unset.
+
+For simulator development, an equivalent save/restore build can be configured
+manually:
+
+```sh
+cmake -S .. -B ../build/sim-checkpoint \
+    -DZIRCON_SIM_ENABLE_CHECKPOINTS=ON \
+    -DZIRCON_VERILATOR_THREADS=5
+cmake --build ../build/sim-checkpoint --target zircon-sim --parallel 4
+../build/sim-checkpoint/bin/zircon-sim \
+    --elf path/to/fw_payload.elf \
+    --platform linux \
+    --max-cycles 0xffffffffffffffff \
+    --checkpoint-save build/linux-latest \
+    --checkpoint-interval 40000000
+```
+
+Each interval atomically replaces `build/linux-latest.rtl` and
+`build/linux-latest.host`, so only the newest checkpoint is retained. The host
+file contains memory, AXI, device, UART, statistics, and Spike differential
+state. It also records the WFI watchdog state and RTL file fingerprint, and
+rejects a mismatched pair, ELF image, platform, differential-testing mode, or
+seed. Version 2 is the current format; the reader remains compatible with
+version 1 files. Resume with the same
+simulation options plus `--checkpoint-load build/linux-latest`. The
+`--max-cycles` value remains the global cycle limit after a restore. A one-time
+save can instead use `--checkpoint-cycle`, or `--checkpoint-marker` can save on
+the first matching UART text.
+
+For an interactive Linux shell, omit `--pass-marker` and `--uart-input`, then
+add `--uart-stdio`. ZirconSim polls standard input without blocking simulation
+and forwards typed bytes to the UART. The same option can be used when
+restoring a Linux checkpoint; once the saved UART input queue is empty, the
+terminal remains attached to the shell.
+
 Pipeline and cache events are accumulated by RTL counters. ZirconSim reads
 those counters once when the program exits and writes a Markdown report under
 `reports/`; it does not sample the performance interface every cycle. The only

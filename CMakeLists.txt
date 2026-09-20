@@ -4,17 +4,47 @@ find_package(verilator CONFIG REQUIRED HINTS
 )
 find_package(Threads REQUIRED)
 find_package(PkgConfig REQUIRED)
+include(CheckCXXCompilerFlag)
 pkg_check_modules(SPIKE REQUIRED IMPORTED_TARGET riscv-riscv)
 find_program(VERILATOR_EXECUTABLE verilator REQUIRED)
 
 option(ZIRCON_SIM_ENABLE_VCD "Build zircon-sim with bounded VCD tracing support" OFF)
-set(ZIRCON_VERILATOR_BUILD_JOBS 4 CACHE STRING
+option(ZIRCON_SIM_ENABLE_CHECKPOINTS "Build zircon-sim with Verilator save/restore support" OFF)
+option(ZIRCON_SIM_PUBLIC_INTERNALS "Expose Verilator internal signals for simulator diagnostics" OFF)
+include(ProcessorCount)
+ProcessorCount(ZIRCON_HOST_PROCESSORS)
+if(NOT ZIRCON_HOST_PROCESSORS OR ZIRCON_HOST_PROCESSORS GREATER 2)
+    set(ZIRCON_DEFAULT_VERILATOR_BUILD_JOBS 2)
+else()
+    set(ZIRCON_DEFAULT_VERILATOR_BUILD_JOBS "${ZIRCON_HOST_PROCESSORS}")
+endif()
+set(ZIRCON_VERILATOR_BUILD_JOBS "${ZIRCON_DEFAULT_VERILATOR_BUILD_JOBS}" CACHE STRING
     "Parallel jobs for compiling the Verilated model")
+set(ZIRCON_VERILATOR_THREADS 5 CACHE STRING
+    "Runtime threads used by the Verilated model")
+set(ZIRCON_VERILATOR_OUTPUT_SPLIT 20000 CACHE STRING
+    "Verilator C++ output split threshold")
+set(ZIRCON_VERILATOR_OUTPUT_SPLIT_CFUNCS 10000 CACHE STRING
+    "Verilator generated-function split threshold")
+option(ZIRCON_SIM_NATIVE_OPTIMIZATION
+    "Compile the simulator and Verilated model for the current host CPU" ON)
+option(ZIRCON_SIM_ENABLE_THIN_LTO
+    "Enable ThinLTO for the simulator and Verilated model" OFF)
+set(ZIRCON_SIM_PGO_MODE "OFF" CACHE STRING
+    "Profile-guided optimization mode: OFF, GENERATE, or USE")
+set_property(CACHE ZIRCON_SIM_PGO_MODE PROPERTY STRINGS OFF GENERATE USE)
+set(ZIRCON_SIM_PGO_PROFILE "" CACHE FILEPATH
+    "LLVM instrumentation profile used when ZIRCON_SIM_PGO_MODE is USE")
+if(NOT ZIRCON_SIM_PGO_MODE STREQUAL "OFF" AND NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    message(FATAL_ERROR "ZirconSim instrumentation PGO requires Clang or AppleClang")
+endif()
 
 add_executable(zircon-sim
     src/AXIMemory.cc
+    src/Checkpoint.cc
     src/ElfImage.cc
     src/main.cc
+    src/PlatformDevices.cc
     src/SpikeReference.cc
     src/Statistic.cc
 )
@@ -28,13 +58,77 @@ set(ZIRCON_VERILATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/rtl")
 set(ZIRCON_VERILATED_MODEL "${ZIRCON_VERILATED_DIR}/libVZirconCore.a")
 set(ZIRCON_VERILATED_RUNTIME "${ZIRCON_VERILATED_DIR}/libverilated.a")
 set(ZIRCON_VERILATOR_TRACE_ARGS)
+set(ZIRCON_VERILATOR_CHECKPOINT_ARGS)
+set(ZIRCON_VERILATOR_DEBUG_ARGS)
+set(ZIRCON_VERILATOR_CXX_FLAGS "-std=c++20")
+set(ZIRCON_VERILATOR_OPT_FAST "-O3")
+set(ZIRCON_VERILATOR_OPT_SLOW "-O0")
+if(ZIRCON_SIM_NATIVE_OPTIMIZATION)
+    check_cxx_compiler_flag("-march=native" ZIRCON_CXX_SUPPORTS_MARCH_NATIVE)
+    if(ZIRCON_CXX_SUPPORTS_MARCH_NATIVE)
+        set(ZIRCON_NATIVE_FLAG "-march=native")
+    else()
+        check_cxx_compiler_flag("-mcpu=native" ZIRCON_CXX_SUPPORTS_MCPU_NATIVE)
+        if(NOT ZIRCON_CXX_SUPPORTS_MCPU_NATIVE)
+            message(FATAL_ERROR "The selected C++ compiler has no supported native-CPU flag")
+        endif()
+        set(ZIRCON_NATIVE_FLAG "-mcpu=native")
+    endif()
+    string(APPEND ZIRCON_VERILATOR_CXX_FLAGS " ${ZIRCON_NATIVE_FLAG}")
+    target_compile_options(zircon-sim PRIVATE "${ZIRCON_NATIVE_FLAG}")
+endif()
 if(ZIRCON_SIM_ENABLE_VCD)
     target_compile_definitions(zircon-sim PRIVATE ZIRCON_ENABLE_VCD=1)
-    list(APPEND ZIRCON_VERILATOR_TRACE_ARGS --trace-vcd)
+    list(APPEND ZIRCON_VERILATOR_TRACE_ARGS
+        --trace-vcd
+        --output-split-ctrace 5000
+    )
+    set(ZIRCON_VERILATOR_OPT_FAST "-O1")
+endif()
+if(ZIRCON_SIM_ENABLE_CHECKPOINTS)
+    target_compile_definitions(zircon-sim PRIVATE ZIRCON_ENABLE_CHECKPOINTS=1)
+    list(APPEND ZIRCON_VERILATOR_CHECKPOINT_ARGS --savable)
+endif()
+if(ZIRCON_SIM_PUBLIC_INTERNALS)
+    list(APPEND ZIRCON_VERILATOR_DEBUG_ARGS --public-flat-rw)
+endif()
+if(ZIRCON_SIM_ENABLE_THIN_LTO)
+    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        set(ZIRCON_LTO_FLAG "-flto=thin")
+    else()
+        set(ZIRCON_LTO_FLAG "-flto")
+    endif()
+    string(APPEND ZIRCON_VERILATOR_OPT_FAST " ${ZIRCON_LTO_FLAG}")
+    target_compile_options(zircon-sim PRIVATE "${ZIRCON_LTO_FLAG}")
+    target_link_options(zircon-sim PRIVATE "${ZIRCON_LTO_FLAG}")
+endif()
+if(ZIRCON_SIM_PGO_MODE STREQUAL "GENERATE")
+    set(ZIRCON_SIM_PGO_RAW "${CMAKE_BINARY_DIR}/zircon-%p.profraw")
+    set(ZIRCON_SIM_PGO_FLAG "-fprofile-instr-generate=${ZIRCON_SIM_PGO_RAW}")
+elseif(ZIRCON_SIM_PGO_MODE STREQUAL "USE")
+    if(NOT ZIRCON_SIM_PGO_PROFILE OR NOT EXISTS "${ZIRCON_SIM_PGO_PROFILE}")
+        message(FATAL_ERROR "ZIRCON_SIM_PGO_PROFILE must name an existing .profdata file in USE mode")
+    endif()
+    set(ZIRCON_SIM_PGO_FLAG "-fprofile-instr-use=${ZIRCON_SIM_PGO_PROFILE}")
+elseif(NOT ZIRCON_SIM_PGO_MODE STREQUAL "OFF")
+    message(FATAL_ERROR "ZIRCON_SIM_PGO_MODE must be OFF, GENERATE, or USE")
+endif()
+if(DEFINED ZIRCON_SIM_PGO_FLAG)
+    string(APPEND ZIRCON_VERILATOR_OPT_FAST " ${ZIRCON_SIM_PGO_FLAG}")
+    target_compile_options(zircon-sim PRIVATE "${ZIRCON_SIM_PGO_FLAG}")
+    target_link_options(zircon-sim PRIVATE "${ZIRCON_SIM_PGO_FLAG}")
+endif()
+if(ZIRCON_SIM_PGO_MODE STREQUAL "USE")
+    target_compile_options(zircon-sim PRIVATE -Wno-profile-instr-out-of-date)
 endif()
 find_program(CCACHE_EXECUTABLE ccache)
 if(NOT CCACHE_EXECUTABLE)
     set(CCACHE_EXECUTABLE "")
+endif()
+if(CMAKE_CXX_COMPILER_AR)
+    set(ZIRCON_VERILATOR_AR "${CMAKE_CXX_COMPILER_AR}")
+else()
+    set(ZIRCON_VERILATOR_AR "${CMAKE_AR}")
 endif()
 
 add_custom_command(
@@ -52,14 +146,20 @@ add_custom_command(
         --cc
         --build
         --build-jobs "${ZIRCON_VERILATOR_BUILD_JOBS}"
+        -MAKEFLAGS
+            "CXX='${CMAKE_CXX_COMPILER}' LINK='${CMAKE_CXX_COMPILER}' AR='${ZIRCON_VERILATOR_AR}' OPT_FAST='${ZIRCON_VERILATOR_OPT_FAST}' OPT_SLOW='${ZIRCON_VERILATOR_OPT_SLOW}' OPT_GLOBAL='${ZIRCON_VERILATOR_OPT_SLOW}'"
         --prefix VZirconCore
         --top-module ZirconCore
         --Mdir "${ZIRCON_VERILATED_DIR}"
         -y "${ZIRCON_RTL_DIR}"
         -Wall
-        --output-split 160000
+        --threads "${ZIRCON_VERILATOR_THREADS}"
+        --output-split "${ZIRCON_VERILATOR_OUTPUT_SPLIT}"
+        --output-split-cfuncs "${ZIRCON_VERILATOR_OUTPUT_SPLIT_CFUNCS}"
         ${ZIRCON_VERILATOR_TRACE_ARGS}
-        -CFLAGS "-std=c++20 -O3"
+        ${ZIRCON_VERILATOR_CHECKPOINT_ARGS}
+        ${ZIRCON_VERILATOR_DEBUG_ARGS}
+        -CFLAGS "${ZIRCON_VERILATOR_CXX_FLAGS}"
         "${ZIRCON_RTL_TOP}"
     DEPENDS
         "${ZIRCON_RTL_TOP}"
@@ -95,7 +195,9 @@ set_target_properties(zircon-sim PROPERTIES
 )
 
 add_executable(zircon-sim-unit
+    src/Checkpoint.cc
     src/ElfImage.cc
+    src/PlatformDevices.cc
     src/SpikeReference.cc
     src/Statistic.cc
     tests/UnitTests.cc
