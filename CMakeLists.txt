@@ -153,6 +153,11 @@ add_custom_command(
         --Mdir "${ZIRCON_VERILATED_DIR}"
         -y "${ZIRCON_RTL_DIR}"
         -Wall
+        # ICache refill RAMs intentionally leave their readback pins unused;
+        # the lower address bits of an aligned line response are likewise
+        # intentionally unused in the generated RTL.
+        -Wno-UNUSEDSIGNAL
+        -Wno-PINCONNECTEMPTY
         --threads "${ZIRCON_VERILATOR_THREADS}"
         --output-split "${ZIRCON_VERILATOR_OUTPUT_SPLIT}"
         --output-split-cfuncs "${ZIRCON_VERILATOR_OUTPUT_SPLIT_CFUNCS}"
