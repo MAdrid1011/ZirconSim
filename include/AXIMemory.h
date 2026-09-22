@@ -2,6 +2,7 @@
 #define AXIMEMORY_HH
 
 #include <cstdint>
+#include <array>
 #include <optional>
 
 #include "DeterministicRng.h"
@@ -30,6 +31,14 @@ class AXIMemory {
     void restore(zircon::sim::CheckpointReader &reader);
 
   private:
+    struct ReadTransaction {
+        bool active = false;
+        uint64_t address = 0;
+        uint64_t size = 4;
+        uint8_t length = 0;
+        uint8_t beat = 0;
+    };
+
     bool randomReady();
     bool randomValid();
 
@@ -38,14 +47,10 @@ class AXIMemory {
     zircon::sim::DeterministicRng rng_;
     zircon::sim::PlatformDevices *platform_;
 
-    bool readActive_ = false;
+    std::array<ReadTransaction, 2> reads_{};
     bool readDataValid_ = false;
-    uint32_t readData_ = 0;
-    uint64_t readAddress_ = 0;
-    uint64_t readSize_ = 4;
-    uint8_t readLength_ = 0;
-    uint8_t readBeat_ = 0;
-    uint8_t readId_ = 0;
+    uint64_t readData_ = 0;
+    uint8_t readSelectedId_ = 0;
     uint8_t readResponse_ = 0;
 
     bool writeActive_ = false;

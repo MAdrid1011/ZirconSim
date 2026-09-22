@@ -122,6 +122,17 @@ uint32_t SparseMemory::read32(uint32_t address) const {
     return value;
 }
 
+uint64_t SparseMemory::read64(uint32_t address) const {
+    if ((address & 7u) == 0) {
+        return static_cast<uint64_t>(read32(address)) | (static_cast<uint64_t>(read32(address + 4)) << 32);
+    }
+    uint64_t value = 0;
+    for (uint32_t byte = 0; byte < 8; ++byte) {
+        value |= static_cast<uint64_t>(read8(address + byte)) << (byte * 8);
+    }
+    return value;
+}
+
 void SparseMemory::write8(uint32_t address, uint8_t value) {
     const uint32_t shift = (address & 3u) * 8;
     const uint32_t mask = 0xffu << shift;
@@ -141,6 +152,14 @@ void SparseMemory::write32(uint32_t address, uint32_t value, uint8_t strobe) {
         return;
     }
     for (uint32_t byte = 0; byte < 4; ++byte) {
+        if ((strobe & (1u << byte)) != 0) {
+            write8(address + byte, static_cast<uint8_t>(value >> (byte * 8)));
+        }
+    }
+}
+
+void SparseMemory::write64(uint32_t address, uint64_t value, uint8_t strobe) {
+    for (uint32_t byte = 0; byte < 8; ++byte) {
         if ((strobe & (1u << byte)) != 0) {
             write8(address + byte, static_cast<uint8_t>(value >> (byte * 8)));
         }

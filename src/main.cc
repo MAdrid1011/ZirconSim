@@ -51,7 +51,7 @@ constexpr const char *kAnsiCyan = "\033[1;36m";
 constexpr const char *kSeparator = "============================================================";
 #ifdef ZIRCON_ENABLE_CHECKPOINTS
 constexpr uint64_t kCheckpointMagic = UINT64_C(0x5a4952434f4e4350);
-constexpr uint32_t kCheckpointVersion = 2;
+constexpr uint32_t kCheckpointVersion = 3;
 #endif
 
 struct RunMetrics {
@@ -766,7 +766,7 @@ void restoreCheckpoint(const std::string &base, const Options &options, uint64_t
         throw std::runtime_error("checkpoint host state has an invalid magic value");
     }
     const uint32_t checkpointVersion = reader.read<uint32_t>();
-    if (checkpointVersion != 1 && checkpointVersion != kCheckpointVersion) {
+    if (checkpointVersion != kCheckpointVersion) {
         throw std::runtime_error("checkpoint host state uses an unsupported version");
     }
     if (reader.read<uint64_t>() != imageFingerprint) {
@@ -816,7 +816,7 @@ void restoreCheckpoint(const std::string &base, const Options &options, uint64_t
     state.recent_commits = reader.read<std::array<RecentCommit, 16>>();
     state.recent_commit_count = static_cast<size_t>(reader.read<uint64_t>());
     state.checkpoint_marker_seen = reader.read<bool>();
-    state.waiting_after_wfi = checkpointVersion >= 2 ? reader.read<bool>() : false;
+    state.waiting_after_wfi = reader.read<bool>();
     statistic.restore(reader);
     image.memory().restore(reader);
     memory.restore(reader);

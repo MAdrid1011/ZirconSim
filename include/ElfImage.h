@@ -16,8 +16,10 @@ class SparseMemory {
   public:
     uint8_t read8(uint32_t address) const;
     uint32_t read32(uint32_t address) const;
+    uint64_t read64(uint32_t address) const;
     void write8(uint32_t address, uint8_t value);
     void write32(uint32_t address, uint32_t value, uint8_t strobe = 0xf);
+    void write64(uint32_t address, uint64_t value, uint8_t strobe = 0xff);
     void load(uint32_t address, const uint8_t *data, size_t size);
     void save(CheckpointWriter &writer) const;
     void restore(CheckpointReader &reader);
