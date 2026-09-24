@@ -104,5 +104,4 @@ including `PT_LOAD`, entry point, and `tohost/fromhost` symbols. Pass the ELF to
 CTest at configure time with `-DZIRCON_TEST_ELF=/absolute/path/to/test.elf`.
 A timeout is only successful when `--allow-timeout` is explicit.
 
-The old handwritten partial RV32IM interpreter remains in the branch history
-but is no longer the reference model. Commit-level comparison uses Spike.
+Commit-level comparison uses Spike as the reference model.

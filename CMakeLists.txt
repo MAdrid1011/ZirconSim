@@ -80,7 +80,7 @@ endif()
 if(ZIRCON_SIM_ENABLE_VCD)
     target_compile_definitions(zircon-sim PRIVATE ZIRCON_ENABLE_VCD=1)
     list(APPEND ZIRCON_VERILATOR_TRACE_ARGS
-        --trace-vcd
+        --trace
         --output-split-ctrace 5000
     )
     set(ZIRCON_VERILATOR_OPT_FAST "-O1")
