@@ -1,53 +1,27 @@
-WORK_DIR = $(abspath .)
-VERILOG_DIR = $(WORK_DIR)/../verilog
-CC_DIR = $(WORK_DIR)/src
-BUILD_DIR = $(WORK_DIR)/build
-TAR_DIR = $(BUILD_DIR)/obj
+PARENT_DIR := $(abspath ..)
+BUILD_DIR ?= $(PARENT_DIR)/build/cmake
+TEST_ELF ?= $(PARENT_DIR)/RV-Software/picotest/build/pico-rv32imaf_zicsr_zifencei-ilp32f.elf
+CMAKE_ARGS ?=
 
+.PHONY: all configure unit verilog rtl smoke clean
 
-VERILOG_TOP 		= $(VERILOG_DIR)/CPU.sv
-VFLAGS 				= --trace --cc --exe -O3 -I$(VERILOG_DIR) -Mdir $(BUILD_DIR) --no-MMD
-VFLAGS 				+= -Wno-UNOPTFLAT -Wno-WIDTHEXPAND --verilate-jobs 8 
-CINC_PATH 			= -CFLAGS -I$(WORK_DIR)/include
+all: rtl
 
-REWRITE = $(WORK_DIR)/script/rewrite.mk
+configure:
+	cmake -S $(PARENT_DIR) -B $(BUILD_DIR) $(CMAKE_ARGS)
 
-CSRCS =  $(shell find $(CC_DIR) -name "*.cc")
-VSRCS = $(shell find $(VERILOG_DIR) -name "*.sv")
-BINARY = $(BUILD_DIR)/VCPU
+unit: configure
+	cmake --build $(BUILD_DIR) --target zircon-sim-unit --parallel
+	$(BUILD_DIR)/bin/zircon-sim-unit $(TEST_ELF)
 
-IMG = 
+verilog: configure
+	cmake --build $(BUILD_DIR) --target zircon-rtl --parallel
 
-COLOR_RED   		= \033[31m
-COLOR_GREEN 		= \033[32m
-COLOR_YELLOW 		= \033[33m
-COLOR_BLUE  		= \033[34m
-COLOR_PURPLE 		= \033[35m
-COLOR_DBLUE 		= \033[36m
-COLOR_NONE  		= \033[0m
+rtl: configure
+	cmake --build $(BUILD_DIR) --target zircon-sim --parallel
 
-
-SCALA_DIR = $(WORK_DIR)/../src/main/scala
-SCALA_SRCS := $(shell find $(SCALA_DIR) -name "*.scala")
-
-
-all: $(BINARY) 
-
-
-$(BINARY): $(CSRCS) $(SCALA_SRCS)
-	@printf "$(COLOR_YELLOW)[SCALA]$(COLOR_NONE) Zircon\n"
-	@$(MAKE) -s -j32 -C ../ sim-verilog
-	@printf "$(COLOR_DBLUE)[VERILATE]$(COLOR_NONE) $(notdir $(BUILD_DIR))/VCPU\n"
-	@mkdir -p $(BUILD_DIR)
-	@verilator $(VFLAGS) $(CSRCS) $(CINC_PATH) $(VERILOG_TOP)
-	@printf "$(COLOR_DBLUE)[MAKE]$(COLOR_NONE) $(notdir $(BUILD_DIR))/VCPU\n"
-	@$(MAKE) -s -j32 -C $(BUILD_DIR) -f $(REWRITE) 
-
-
-run: $(BINARY) 
-	@printf "$(COLOR_YELLOW)[RUN]$(COLOR_NONE) build/$(notdir $<)\n"
-	@$(BINARY) $(IMG) $(ARGS)
-
+smoke: rtl
+	$(BUILD_DIR)/bin/zircon-sim --elf $(TEST_ELF) --seed 1 --max-cycles 10 --allow-timeout
 
 clean:
-	rm -rf $(BUILD_DIR)
+	cmake -E rm -rf $(BUILD_DIR)
