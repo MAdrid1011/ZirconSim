@@ -158,6 +158,9 @@ add_custom_command(
         # intentionally unused in the generated RTL.
         -Wno-UNUSEDSIGNAL
         -Wno-PINCONNECTEMPTY
+        # Thread partitioning only reports available simulation parallelism;
+        # it does not change model semantics or prevent execution.
+        -Wno-UNOPTTHREADS
         --threads "${ZIRCON_VERILATOR_THREADS}"
         --output-split "${ZIRCON_VERILATOR_OUTPUT_SPLIT}"
         --output-split-cfuncs "${ZIRCON_VERILATOR_OUTPUT_SPLIT_CFUNCS}"
