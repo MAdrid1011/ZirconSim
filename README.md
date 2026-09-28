@@ -1,9 +1,9 @@
 # ZirconSim
 
-`zircon-2026` is the deterministic Verilator and differential-test harness for
-Zircon-2026. It replaces wall-clock randomness, raw-binary-only loading, and
-illegal-instruction termination with explicit seeds, ELF32 loading, symbol
-resolution, and architectural `tohost` completion.
+ZirconSim 是 Zircon-2026 的 Verilator 仿真与 Spike 差分环境。它加载 RV32 ELF，解析
+入口和 `tohost` 等符号，在处理器退休点逐条比较 PC、指令与整数/浮点写回结果。
+
+从 `ZirconSim/` 目录构建并运行：
 
 ```sh
 cmake -S .. -B ../build/cmake
@@ -11,97 +11,30 @@ cmake --build ../build/cmake --target zircon-sim --parallel
 ../build/cmake/bin/zircon-sim --elf path/to/test.elf
 ```
 
-The build requires the Spike development library and its `riscv-riscv.pc`
-pkg-config metadata. ZirconSim steps Spike as an in-process reference model,
-avoiding the large commit-log stream of an external Spike process.
+构建需要 Spike 开发库及其 `riscv-riscv.pc` 元数据。顶层 CMake 会生成 `ZirconCore`
+SystemVerilog，调用 Verilator 并链接进程内 Spike。终端运行时显示周期、退休指令数、IPC
+和仿真速度；程序结束后输出结果、差分状态和性能报告位置。重定向输出为单条 JSON 记录，
+`--json` 可在终端强制使用 JSON。
 
-CMake tracks the Chisel sources, elaborates `ZirconCore`, invokes Verilator
-through its native CMake integration, and links the simulator. The retained
-Makefile is a compatibility wrapper around these CMake targets. Passing
-`--parallel` without a number lets the native build tool use its maximum
-parallelism, so the commands do not hard-code a host-specific job count.
+## Linux 仿真
 
-Interactive runs use a colored terminal dashboard with live cycles, retired
-instructions, IPC, and simulation speed. The final summary reports the
-program result, Spike status, performance, and Markdown report path. Redirected
-output remains a single JSON record for scripts and CI; use `--json` to force
-that format in a terminal. Set `NO_COLOR=1` or pass `--no-color` for plain text,
-and pass `--no-progress` to suppress the live status line.
-
-The default build omits VCD instrumentation for simulation speed. Configure a
-separate waveform build with `-DZIRCON_SIM_ENABLE_VCD=ON`, then use `--wave`
-with `--wave-start` and `--wave-cycles` to keep the dump window bounded. Long
-simulations reject an unbounded waveform request.
-
-The supported Linux entry point lives at the repository root and selects the
-validated build, PGO, differential-test, checkpoint, logging, and UART settings:
+Zircon-2026 主仓库提供软件镜像、PGO 构建、检查点和交互 UART 的统一入口：
 
 ```sh
 make -C RV-Software/linux-system linux
 ```
 
-It computes a fingerprint over the RTL, simulator, build configuration, tool
-versions, and Linux payload. A missing or stale profile triggers a 20-million-
-cycle differential PGO training run; an unchanged profile is reused. The final
-simulator uses Release `O3`, ThinLTO, native host instructions, five Verilator
-runtime threads, and four model build jobs. This default PGO path requires
-Clang/AppleClang and a matching `llvm-profdata`; the launcher selects
-`clang++` from `PATH` when `CXX` is unset.
+默认配置使用 Clang/AppleClang、`O3`、ThinLTO、五个 Verilator 运行线程和进程内 Spike
+差分。PGO 数据与 RTL、仿真器、工具链和 Linux 镜像绑定；输入变化时自动生成对应的优化数据。
+终端显示 `~ #` 后可直接输入命令。启动环境与验证范围见主仓库的
+[Linux 启动说明](https://github.com/MAdrid1011/Zircon-2026/blob/main/docs/Linux-Bringup.md)。
 
-For simulator development, an equivalent save/restore build can be configured
-manually:
+## 仿真接口
 
-```sh
-cmake -S .. -B ../build/sim-checkpoint \
-    -DZIRCON_SIM_ENABLE_CHECKPOINTS=ON \
-    -DZIRCON_VERILATOR_THREADS=5
-cmake --build ../build/sim-checkpoint --target zircon-sim --parallel 4
-../build/sim-checkpoint/bin/zircon-sim \
-    --elf path/to/fw_payload.elf \
-    --platform linux \
-    --max-cycles 0xffffffffffffffff \
-    --checkpoint-save build/linux-latest \
-    --checkpoint-interval 40000000
-```
+- `--seed` 指定可重复的初始化种子；`--max-cycles` 指定运行周期上限。
+- `--no-color` 和 `--no-progress` 控制终端输出；`--uart-stdio` 将 UART 连接到当前终端。
+- `--checkpoint-save`、`--checkpoint-load` 与 `--checkpoint-interval` 保存和恢复长时间仿真。
 
-Each interval atomically replaces `build/linux-latest.rtl` and
-`build/linux-latest.host`, so only the newest checkpoint is retained. The host
-file contains memory, AXI, device, UART, statistics, and Spike differential
-state. It also records the WFI watchdog state and RTL file fingerprint, and
-rejects a mismatched pair, ELF image, platform, differential-testing mode, or
-seed. Version 2 is the current format; the reader remains compatible with
-version 1 files. Resume with the same
-simulation options plus `--checkpoint-load build/linux-latest`. The
-`--max-cycles` value remains the global cycle limit after a restore. A one-time
-save can instead use `--checkpoint-cycle`, or `--checkpoint-marker` can save on
-the first matching UART text.
-
-For an interactive Linux shell, omit `--pass-marker` and `--uart-input`, then
-add `--uart-stdio`. ZirconSim polls standard input without blocking simulation
-and forwards typed bytes to the UART. The same option can be used when
-restoring a Linux checkpoint; once the saved UART input queue is empty, the
-terminal remains attached to the shell.
-
-Pipeline and cache events are accumulated by RTL counters. ZirconSim reads
-those counters once when the program exits and writes a Markdown report under
-`reports/`; it does not sample the performance interface every cycle. The only
-per-cycle debug reads are the three retirement lanes required by Difftest.
-
-Counter CSRs cannot be compared by absolute value because Spike instructions
-and RTL cycles advance them on different time bases. For `cycle`, `time`,
-`instret`, `mcycle`, and `minstret` reads, Difftest compares the PC and
-instruction, accepts the DUT result for that operation, copies the complete
-architectural GPR/FPR state into Spike, and resumes strict comparison on the
-next instruction. Synchronous exception steps are omitted from the Spike
-retirement stream because the RTL retirement interface reports only
-instructions that increment `minstret`.
-
-When the `RV-Software` submodule is present, the `zircon-functest-dummy` target
-builds the initial software test through the same top-level CMake build.
-
-`zircon-sim-unit` checks the deterministic PRNG and loads an RV32 ELF,
-including `PT_LOAD`, entry point, and `tohost/fromhost` symbols. Pass the ELF to
-CTest at configure time with `-DZIRCON_TEST_ELF=/absolute/path/to/test.elf`.
-A timeout is only successful when `--allow-timeout` is explicit.
-
-Commit-level comparison uses Spike as the reference model.
+性能计数器在程序结束时汇总为 Markdown 报告。`zircon-sim-unit` 验证随机数生成与 RV32
+ELF 装载，包括 `PT_LOAD`、入口地址和 `tohost/fromhost` 符号。功能测试目标使用
+`RV-Software` 中的裸机程序；`--allow-timeout` 显式允许以周期上限结束的测试。
