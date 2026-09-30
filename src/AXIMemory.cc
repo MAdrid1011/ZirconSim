@@ -37,6 +37,8 @@ void AXIMemory::drive(VZirconCore &cpu) {
             } else {
                 readData_ = static_cast<uint64_t>(deviceData) << ((address & 4u) * 8);
             }
+        } else if (platform_ != nullptr && platform_->isWriteCombine(read.address, read.size)) {
+            readData_ = 0;
         } else if (platform_ != nullptr && !platform_->isRam(read.address, read.size)) {
             readData_ = 0;
             readResponse_ = 3;
@@ -98,7 +100,9 @@ std::optional<int> AXIMemory::update(VZirconCore &cpu) {
         const unsigned laneShift = (address & 4u) * 8;
         const uint32_t narrowData = static_cast<uint32_t>(data >> laneShift);
         const uint8_t narrowStrobe = static_cast<uint8_t>((strobe >> (laneShift / 8)) & 0xfu);
-        if (platform_ != nullptr && platform_->isDevice(address, writeSize_)) {
+        if (platform_ != nullptr && platform_->isWriteCombine(address, writeSize_ * (writeLength_ + 1))) {
+            memory_.write64(address & ~uint32_t{7}, data, strobe);
+        } else if (platform_ != nullptr && platform_->isDevice(address, writeSize_)) {
             if (writeLength_ != 0 || !platform_->writeBus(address, narrowData, narrowStrobe)) {
                 writeResponse_ = 2;
             }

@@ -1322,6 +1322,12 @@ int main(int argc, char **argv) {
                         << static_cast<unsigned>(dut.io_debug_backend_dcache_executeRelease)
                         << ",\"dcacheMissBusy\":" << static_cast<unsigned>(dut.io_debug_backend_dcache_missBusy)
                         << ",\"dcacheStoreState\":" << static_cast<unsigned>(dut.io_debug_backend_dcache_storeState)
+                        << ",\"dcachePostedResponsePending\":"
+                        << static_cast<unsigned>(dut.io_debug_backend_dcache_postedResponsePending)
+                        << ",\"dcacheWriteCombineBusy\":"
+                        << static_cast<unsigned>(dut.io_debug_backend_dcache_writeCombineBusy)
+                        << ",\"dcacheLowerOwnerWriteCombine\":"
+                        << static_cast<unsigned>(dut.io_debug_backend_dcache_lowerOwnerWriteCombine)
                         << ",\"dcacheFlush\":" << static_cast<unsigned>(dut.io_debug_backend_dcache_flush)
                         << ",\"csr\":\"" << csr_context << "\"";
                     printJsonMetrics(metrics);
