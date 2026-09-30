@@ -21,8 +21,13 @@ PlatformDevices::PlatformDevices(bool emitUart, std::string uartInput) : emitUar
 
 bool PlatformDevices::isRam(uint64_t address, size_t size) const { return contains(address, size, kRamBase, kRamSize); }
 
+bool PlatformDevices::isWriteCombine(uint64_t address, size_t size) const {
+    return contains(address, size, kWriteCombineBase, kWriteCombineSize);
+}
+
 bool PlatformDevices::isDevice(uint64_t address, size_t size) const {
-    return contains(address, size, kClintBase, kClintSize) || contains(address, size, kUartBase, kUartSize);
+    return (contains(address, size, kClintBase, kClintSize) || contains(address, size, kUartBase, kUartSize)) &&
+           !isWriteCombine(address, size);
 }
 
 bool PlatformDevices::readByte(uint32_t address, uint8_t &value) {

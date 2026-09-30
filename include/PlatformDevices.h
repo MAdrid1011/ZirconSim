@@ -20,6 +20,8 @@ class PlatformDevices {
     static constexpr uint32_t kClintSize = 0x00010000u;
     static constexpr uint32_t kUartBase = 0xa1000000u;
     static constexpr uint32_t kUartSize = 0x00001000u;
+    static constexpr uint32_t kWriteCombineBase = 0xa2000000u;
+    static constexpr uint32_t kWriteCombineSize = 0x01000000u;
     static constexpr uint32_t kCpuFrequencyHz = 100000000u;
     static constexpr uint32_t kTimebaseFrequencyHz = 10000000u;
     static constexpr uint32_t kTimerDivider = kCpuFrequencyHz / kTimebaseFrequencyHz;
@@ -33,6 +35,7 @@ class PlatformDevices {
 
     bool isRam(uint64_t address, size_t size) const;
     bool isDevice(uint64_t address, size_t size) const;
+    bool isWriteCombine(uint64_t address, size_t size) const;
     bool timerInterrupt() const;
     uint64_t time() const;
     void setTime(uint64_t value);
