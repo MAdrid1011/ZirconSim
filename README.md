@@ -48,12 +48,15 @@ ELF 装载，包括 `PT_LOAD`、入口地址和 `tohost/fromhost` 符号。功�
 cmake -S . -B build/performance -DCMAKE_CXX_COMPILER=clang++ \
   -DZIRCON_CORE_PROFILE=performance
 cmake --build build/performance --target zircon-sim -j4
+cmake --build build/performance --target coremark
 ```
 
 构建配置同时选择 RTL、256 bit AXI 模型和 Spike ISA。性能核心的向量退休差分比较目的
 寄存器组、`vl/vtype/vstart`、浮点异常与整数饱和标志以及 Store 地址、字节 mask 和数据。
 标准允许的 agnostic 元素采用 DUT 的全一值同步参考状态，undisturbed 元素仍逐元素校验。
 默认保留差分与动态进度；`time` 使用核心周期时基。
+`coremark` 构建目标按核心配置选择对应软件。Verilator 线程池使用已编译模型的线程数；
+同时运行多个仿真时，为各进程分配互不重叠的 CPU，避免运行线程争用。
 
 SIMD 五项计算程序、SGEMM 与吞吐测试位于 `RV-Software/simd/`；官方单精度负载位于
 `RV-Software/coremark-pro/`。完整系统与性能核心的 RTL、仿真器和软件使用独立生成目录。

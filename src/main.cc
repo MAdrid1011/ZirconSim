@@ -1061,6 +1061,7 @@ int main(int argc, char **argv) {
         }
 
         Verilated::commandArgs(argc, argv);
+        Verilated::threadContextp()->threads(ZIRCON_MODEL_THREADS);
         VZirconCore dut;
 #ifdef ZIRCON_ENABLE_VCD
         VerilatedVcdC trace;

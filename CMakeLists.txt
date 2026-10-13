@@ -55,6 +55,7 @@ else()
     target_compile_definitions(zircon-sim PRIVATE ZIRCON_AXI_DATA_BITS=64 ZIRCON_VLEN=0)
 endif()
 target_compile_definitions(zircon-sim PRIVATE ZIRCON_CORE_PROFILE="${ZIRCON_CORE_PROFILE}")
+target_compile_definitions(zircon-sim PRIVATE ZIRCON_MODEL_THREADS=${ZIRCON_VERILATOR_THREADS})
 target_compile_options(zircon-sim PRIVATE
     -Wall
     -Wextra
@@ -233,6 +234,36 @@ set(ZIRCON_TEST_ELF "" CACHE FILEPATH
 
 find_program(MAKE_EXECUTABLE make)
 if(MAKE_EXECUTABLE AND EXISTS "${ZIRCON_RV_SOFTWARE_DIR}/coremark/Makefile")
+  if(ZIRCON_CORE_PROFILE STREQUAL "performance")
+    execute_process(
+        COMMAND "${MAKE_EXECUTABLE}" -s --no-print-directory -C "${ZIRCON_RV_SOFTWARE_DIR}/simd" print-coremark-elf
+        OUTPUT_VARIABLE ZIRCON_COREMARK_ELF
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        COMMAND_ERROR_IS_FATAL ANY
+    )
+    file(GLOB ZIRCON_SIMD_RUNTIME_SOURCES CONFIGURE_DEPENDS
+        "${ZIRCON_RV_SOFTWARE_DIR}/simd/*.c"
+        "${ZIRCON_RV_SOFTWARE_DIR}/simd/*.h"
+        "${ZIRCON_RV_SOFTWARE_DIR}/simd/*.py"
+        "${ZIRCON_RV_SOFTWARE_DIR}/simd/*.S"
+        "${ZIRCON_RV_SOFTWARE_DIR}/simd/*.ld"
+        "${ZIRCON_RV_SOFTWARE_DIR}/simd/Makefile"
+    )
+    file(GLOB ZIRCON_COREMARK_SOURCES CONFIGURE_DEPENDS
+        "${ZIRCON_RV_SOFTWARE_DIR}/coremark/src/*.c"
+        "${ZIRCON_RV_SOFTWARE_DIR}/coremark/include/*.h"
+        "${ZIRCON_RV_SOFTWARE_DIR}/base-port/tool/src/*.c"
+        "${ZIRCON_RV_SOFTWARE_DIR}/base-port/tool/include/*.h"
+        "${ZIRCON_RV_SOFTWARE_DIR}/base-port/base/include/*.h"
+    )
+    add_custom_command(
+        OUTPUT "${ZIRCON_COREMARK_ELF}"
+        COMMAND "${MAKE_EXECUTABLE}" -C "${ZIRCON_RV_SOFTWARE_DIR}/simd" coremark
+        DEPENDS ${ZIRCON_SIMD_RUNTIME_SOURCES} ${ZIRCON_COREMARK_SOURCES}
+        COMMENT "Building scalar CoreMark for the SIMD8 performance core"
+        VERBATIM
+    )
+  else()
     set(ZIRCON_COREMARK_BUILD_ELF
         "${ZIRCON_RV_SOFTWARE_DIR}/coremark/build/coremark-i30-rv32imaf_zicsr_zifencei-ilp32f.elf"
     )
@@ -259,6 +290,7 @@ if(MAKE_EXECUTABLE AND EXISTS "${ZIRCON_RV_SOFTWARE_DIR}/coremark/Makefile")
         COMMENT "Building the RV32 CoreMark benchmark"
         VERBATIM
     )
+  endif()
     add_custom_target(zircon-coremark-software DEPENDS "${ZIRCON_COREMARK_ELF}")
     add_custom_target(coremark
         COMMAND "$<TARGET_FILE:zircon-sim>"
@@ -274,7 +306,7 @@ if(MAKE_EXECUTABLE AND EXISTS "${ZIRCON_RV_SOFTWARE_DIR}/coremark/Makefile")
     )
 endif()
 
-if(MAKE_EXECUTABLE AND EXISTS "${ZIRCON_RV_SOFTWARE_DIR}/functest/Makefile")
+if(ZIRCON_CORE_PROFILE STREQUAL "system" AND MAKE_EXECUTABLE AND EXISTS "${ZIRCON_RV_SOFTWARE_DIR}/functest/Makefile")
     file(GLOB_RECURSE ZIRCON_FUNCTEST_COMMON_SOURCES CONFIGURE_DEPENDS
         "${ZIRCON_RV_SOFTWARE_DIR}/base-port/*.c"
         "${ZIRCON_RV_SOFTWARE_DIR}/base-port/*.h"
