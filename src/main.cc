@@ -45,6 +45,40 @@ namespace {
 std::optional<std::string> compareVectorCommit(const VZirconCore &dut, unsigned lane,
     const zircon::sim::SpikeCommit &commit, zircon::sim::SpikeReference &reference) {
     if (!commit.vector.has_value()) { return std::nullopt; }
+    const std::array<const uint32_t *, 64> registers{{
+        dut.io_debug_vector_registers_0, dut.io_debug_vector_registers_1,
+        dut.io_debug_vector_registers_2, dut.io_debug_vector_registers_3,
+        dut.io_debug_vector_registers_4, dut.io_debug_vector_registers_5,
+        dut.io_debug_vector_registers_6, dut.io_debug_vector_registers_7,
+        dut.io_debug_vector_registers_8, dut.io_debug_vector_registers_9,
+        dut.io_debug_vector_registers_10, dut.io_debug_vector_registers_11,
+        dut.io_debug_vector_registers_12, dut.io_debug_vector_registers_13,
+        dut.io_debug_vector_registers_14, dut.io_debug_vector_registers_15,
+        dut.io_debug_vector_registers_16, dut.io_debug_vector_registers_17,
+        dut.io_debug_vector_registers_18, dut.io_debug_vector_registers_19,
+        dut.io_debug_vector_registers_20, dut.io_debug_vector_registers_21,
+        dut.io_debug_vector_registers_22, dut.io_debug_vector_registers_23,
+        dut.io_debug_vector_registers_24, dut.io_debug_vector_registers_25,
+        dut.io_debug_vector_registers_26, dut.io_debug_vector_registers_27,
+        dut.io_debug_vector_registers_28, dut.io_debug_vector_registers_29,
+        dut.io_debug_vector_registers_30, dut.io_debug_vector_registers_31,
+        dut.io_debug_vector_registers_32, dut.io_debug_vector_registers_33,
+        dut.io_debug_vector_registers_34, dut.io_debug_vector_registers_35,
+        dut.io_debug_vector_registers_36, dut.io_debug_vector_registers_37,
+        dut.io_debug_vector_registers_38, dut.io_debug_vector_registers_39,
+        dut.io_debug_vector_registers_40, dut.io_debug_vector_registers_41,
+        dut.io_debug_vector_registers_42, dut.io_debug_vector_registers_43,
+        dut.io_debug_vector_registers_44, dut.io_debug_vector_registers_45,
+        dut.io_debug_vector_registers_46, dut.io_debug_vector_registers_47,
+        dut.io_debug_vector_registers_48, dut.io_debug_vector_registers_49,
+        dut.io_debug_vector_registers_50, dut.io_debug_vector_registers_51,
+        dut.io_debug_vector_registers_52, dut.io_debug_vector_registers_53,
+        dut.io_debug_vector_registers_54, dut.io_debug_vector_registers_55,
+        dut.io_debug_vector_registers_56, dut.io_debug_vector_registers_57,
+        dut.io_debug_vector_registers_58, dut.io_debug_vector_registers_59,
+        dut.io_debug_vector_registers_60, dut.io_debug_vector_registers_61,
+        dut.io_debug_vector_registers_62, dut.io_debug_vector_registers_63,
+    }};
     struct Trace {
         uint8_t base, count;
         uint64_t physical;
@@ -94,6 +128,12 @@ std::optional<std::string> compareVectorCommit(const VZirconCore &dut, unsigned 
         const unsigned fieldRegisters = 1u << dut.io_debug_vector_store_fieldRegisterShift;
         const unsigned fields = dut.io_debug_vector_store_lastField + 1u;
         if (scattered && fields * fieldRegisters != count) { return "vector Store segment layout is invalid"; }
+        const std::array<const uint32_t *, 8> elementAddresses{{
+            dut.io_debug_vector_store_elementAddresses_0, dut.io_debug_vector_store_elementAddresses_1,
+            dut.io_debug_vector_store_elementAddresses_2, dut.io_debug_vector_store_elementAddresses_3,
+            dut.io_debug_vector_store_elementAddresses_4, dut.io_debug_vector_store_elementAddresses_5,
+            dut.io_debug_vector_store_elementAddresses_6, dut.io_debug_vector_store_elementAddresses_7,
+        }};
         auto collect = [&](unsigned group, unsigned begin, unsigned end) {
             const uint32_t address = dut.io_debug_vector_store_addresses[group];
             const uint32_t mask = dut.io_debug_vector_store_masks[group];
@@ -101,7 +141,7 @@ std::optional<std::string> compareVectorCommit(const VZirconCore &dut, unsigned 
                 if ((mask & (uint32_t{1} << byte)) == 0) { continue; }
                 const unsigned elementByte = byte & (elementBytes - 1u);
                 const uint32_t byteAddress = scattered ?
-                    dut.io_debug_vector_store_elementAddresses[group * 32 + byte - elementByte] + elementByte : address + byte;
+                    elementAddresses[group][byte - elementByte] + elementByte : address + byte;
                 const uint8_t got = dut.io_debug_vector_store_data[group * 8 + byte / 4] >> ((byte % 4) * 8);
                 stores.emplace_back(byteAddress, got);
             }
@@ -189,7 +229,7 @@ std::optional<std::string> compareVectorCommit(const VZirconCore &dut, unsigned 
         const unsigned physical = (trace.physical >> (group * 6)) & 63u;
         std::array<uint32_t, 8> actual;
         for (unsigned word = 0; word < 8; ++word) {
-            actual[word] = dut.io_debug_vector_registers[physical * 8 + word];
+            actual[word] = registers[physical][word];
         }
         const auto expected = reference.vectorRegister(reg);
         const uint32_t elementMask = bits == 32 ? ~uint32_t{0} : (uint32_t{1} << bits) - 1;
