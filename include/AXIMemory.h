@@ -10,6 +10,10 @@
 #include "PlatformDevices.h"
 #include "VZirconCore.h"
 
+#ifndef ZIRCON_AXI_DATA_BITS
+#define ZIRCON_AXI_DATA_BITS 64
+#endif
+
 namespace zircon::sim {
 class CheckpointReader;
 class CheckpointWriter;
@@ -49,7 +53,8 @@ class AXIMemory {
 
     std::array<ReadTransaction, 2> reads_{};
     bool readDataValid_ = false;
-    uint64_t readData_ = 0;
+    static constexpr unsigned kBusBytes = ZIRCON_AXI_DATA_BITS / 8;
+    std::array<uint32_t, kBusBytes / 4> readData_{};
     uint8_t readSelectedId_ = 0;
     uint8_t readResponse_ = 0;
 

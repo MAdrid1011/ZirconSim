@@ -26,24 +26,25 @@ void AXIMemory::drive(VZirconCore &cpu) {
     if ((demandRead || prefetchRead) && !readDataValid_ && (reads_[demandRead ? 0 : 1].beat != 0 || randomValid())) {
         readSelectedId_ = demandRead ? 0 : 1;
         const auto &read = reads_[readSelectedId_];
+        readData_.fill(0);
         readDataValid_ = true;
         readResponse_ = 0;
         const uint32_t address = static_cast<uint32_t>(read.address);
         if (platform_ != nullptr && platform_->isDevice(read.address, read.size)) {
             uint32_t deviceData = 0;
             if (read.length != 0 || !platform_->readBus(address, read.size, deviceData)) {
-                readData_ = 0;
                 readResponse_ = 2;
             } else {
-                readData_ = static_cast<uint64_t>(deviceData) << ((address & 4u) * 8);
+                readData_[(address & (kBusBytes - 1)) / 4] = deviceData;
             }
         } else if (platform_ != nullptr && platform_->isWriteCombine(read.address, read.size)) {
-            readData_ = 0;
         } else if (platform_ != nullptr && !platform_->isRam(read.address, read.size)) {
-            readData_ = 0;
             readResponse_ = 3;
         } else {
-            readData_ = memory_.read64(address & ~uint32_t{7});
+            const uint32_t base = address & ~uint32_t{kBusBytes - 1};
+            for (unsigned word = 0; word < readData_.size(); ++word) {
+                readData_[word] = memory_.read32(base + word * 4);
+            }
         }
     }
 
@@ -51,7 +52,13 @@ void AXIMemory::drive(VZirconCore &cpu) {
     cpu.io_axi_ar_ready = requestReadId < reads_.size() && !reads_[requestReadId].active && randomReady();
     cpu.io_axi_r_valid = readDataValid_;
     cpu.io_axi_r_bits_id = readSelectedId_;
-    cpu.io_axi_r_bits_data = readData_;
+#if ZIRCON_AXI_DATA_BITS == 64
+    cpu.io_axi_r_bits_data = uint64_t{readData_[0]} | (uint64_t{readData_[1]} << 32);
+#else
+    for (unsigned word = 0; word < readData_.size(); ++word) {
+        cpu.io_axi_r_bits_data[word] = readData_[word];
+    }
+#endif
     cpu.io_axi_r_bits_resp = readResponse_;
     cpu.io_axi_r_bits_last = readDataValid_ && reads_[readSelectedId_].beat == reads_[readSelectedId_].length;
 
@@ -95,13 +102,25 @@ std::optional<int> AXIMemory::update(VZirconCore &cpu) {
 
     if (cpu.io_axi_w_valid && cpu.io_axi_w_ready) {
         const uint32_t address = static_cast<uint32_t>(writeAddress_);
-        const uint64_t data = cpu.io_axi_w_bits_data;
-        const uint8_t strobe = cpu.io_axi_w_bits_strb;
-        const unsigned laneShift = (address & 4u) * 8;
-        const uint32_t narrowData = static_cast<uint32_t>(data >> laneShift);
-        const uint8_t narrowStrobe = static_cast<uint8_t>((strobe >> (laneShift / 8)) & 0xfu);
+        const uint32_t strobe = cpu.io_axi_w_bits_strb;
+        const auto wordData = [&](unsigned word) -> uint32_t {
+#if ZIRCON_AXI_DATA_BITS == 64
+            return static_cast<uint32_t>(cpu.io_axi_w_bits_data >> (32 * word));
+#else
+            return cpu.io_axi_w_bits_data[word];
+#endif
+        };
+        const unsigned laneByte = address & (kBusBytes - 1);
+        const uint32_t narrowData = wordData(laneByte / 4);
+        const uint8_t narrowStrobe = static_cast<uint8_t>((strobe >> (laneByte & ~3u)) & 0xfu);
+        const auto writeRam = [&] {
+            const uint32_t base = address & ~uint32_t{kBusBytes - 1};
+            for (unsigned word = 0; word < kBusBytes / 4; ++word) {
+                memory_.write32(base + word * 4, wordData(word), (strobe >> (4 * word)) & 0xfu);
+            }
+        };
         if (platform_ != nullptr && platform_->isWriteCombine(address, writeSize_ * (writeLength_ + 1))) {
-            memory_.write64(address & ~uint32_t{7}, data, strobe);
+            writeRam();
         } else if (platform_ != nullptr && platform_->isDevice(address, writeSize_)) {
             if (writeLength_ != 0 || !platform_->writeBus(address, narrowData, narrowStrobe)) {
                 writeResponse_ = 2;
@@ -109,7 +128,7 @@ std::optional<int> AXIMemory::update(VZirconCore &cpu) {
         } else if (platform_ != nullptr && !platform_->isRam(address, writeSize_)) {
             writeResponse_ = 3;
         } else {
-            memory_.write64(address & ~uint32_t{7}, data, strobe);
+            writeRam();
         }
         if (platform_ == nullptr && address == kUartAddress && (narrowStrobe & 1u) != 0) {
             std::cout.put(static_cast<char>(narrowData & 0xffu));
@@ -192,7 +211,7 @@ void AXIMemory::restore(zircon::sim::CheckpointReader &reader) {
     }
     rng_.setState(reader.read<uint64_t>());
     readDataValid_ = reader.read<bool>();
-    readData_ = reader.read<uint64_t>();
+    readData_ = reader.read<decltype(readData_)>();
     readSelectedId_ = reader.read<uint8_t>();
     readResponse_ = reader.read<uint8_t>();
     for (auto &read : reads_) {

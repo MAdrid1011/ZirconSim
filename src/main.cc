@@ -41,6 +41,188 @@
 
 namespace {
 
+#ifdef ZIRCON_PERFORMANCE_CORE
+std::optional<std::string> compareVectorCommit(const VZirconCore &dut, unsigned lane,
+    const zircon::sim::SpikeCommit &commit, zircon::sim::SpikeReference &reference) {
+    if (!commit.vector.has_value()) { return std::nullopt; }
+    struct Trace {
+        uint8_t base, count;
+        uint64_t physical;
+        bool configuration;
+        uint32_t vl, vtype;
+        uint8_t flags;
+        bool saturated;
+    };
+    const std::array<Trace, 3> traces{{
+        {dut.io_debug_vector_retire_0_base, dut.io_debug_vector_retire_0_count,
+         dut.io_debug_vector_retire_0_physical, bool(dut.io_debug_vector_retire_0_result_configuration),
+         dut.io_debug_vector_retire_0_result_vl, dut.io_debug_vector_retire_0_result_vtype,
+         dut.io_debug_vector_retire_0_result_fflags, bool(dut.io_debug_vector_retire_0_result_saturated)},
+        {dut.io_debug_vector_retire_1_base, dut.io_debug_vector_retire_1_count,
+         dut.io_debug_vector_retire_1_physical, bool(dut.io_debug_vector_retire_1_result_configuration),
+         dut.io_debug_vector_retire_1_result_vl, dut.io_debug_vector_retire_1_result_vtype,
+         dut.io_debug_vector_retire_1_result_fflags, bool(dut.io_debug_vector_retire_1_result_saturated)},
+        {dut.io_debug_vector_retire_2_base, dut.io_debug_vector_retire_2_count,
+         dut.io_debug_vector_retire_2_physical, bool(dut.io_debug_vector_retire_2_result_configuration),
+         dut.io_debug_vector_retire_2_result_vl, dut.io_debug_vector_retire_2_result_vtype,
+         dut.io_debug_vector_retire_2_result_fflags, bool(dut.io_debug_vector_retire_2_result_saturated)},
+    }};
+    const auto &trace = traces.at(lane);
+    const auto &vector = *commit.vector;
+    const bool configuration = (commit.instruction & 0x707fu) == 0x7057u;
+    if (configuration != trace.configuration || vector.after.vstart != 0 ||
+        (configuration && (trace.vl != vector.after.vl || trace.vtype != vector.after.vtype)) ||
+        (vector.before.fflags | trace.flags) != vector.after.fflags ||
+        (vector.before.vxsat || trace.saturated) != vector.after.vxsat) {
+        std::ostringstream error;
+        error << "vector configuration or retired exception flags differ: flags before="
+              << unsigned(vector.before.fflags) << " DUT accrued=" << unsigned(trace.flags)
+              << " reference after=" << unsigned(vector.after.fflags)
+              << " saturation before=" << vector.before.vxsat << " DUT=" << trace.saturated
+              << " reference after=" << vector.after.vxsat << " vstart=" << vector.after.vstart;
+        return error.str();
+    }
+    if (trace.count > 8 || trace.base + trace.count > 32) { return "vector destination group is invalid"; }
+    const uint32_t opcode = commit.instruction & 0x7fu;
+    if (opcode == 0x27u) {
+        const unsigned count = dut.io_debug_vector_store_count;
+        if (count == 0 || count > 8) { return "vector Store task count is invalid"; }
+        std::vector<std::pair<uint32_t, uint8_t>> stores;
+        const bool scattered = dut.io_debug_vector_store_scattered;
+        const unsigned eew = dut.io_debug_vector_store_eew;
+        const unsigned elementBytes = 1u << eew;
+        const unsigned fieldRegisters = 1u << dut.io_debug_vector_store_fieldRegisterShift;
+        const unsigned fields = dut.io_debug_vector_store_lastField + 1u;
+        if (scattered && fields * fieldRegisters != count) { return "vector Store segment layout is invalid"; }
+        auto collect = [&](unsigned group, unsigned begin, unsigned end) {
+            const uint32_t address = dut.io_debug_vector_store_addresses[group];
+            const uint32_t mask = dut.io_debug_vector_store_masks[group];
+            for (unsigned byte = begin; byte < end; ++byte) {
+                if ((mask & (uint32_t{1} << byte)) == 0) { continue; }
+                const unsigned elementByte = byte & (elementBytes - 1u);
+                const uint32_t byteAddress = scattered ?
+                    dut.io_debug_vector_store_elementAddresses[group * 32 + byte - elementByte] + elementByte : address + byte;
+                const uint8_t got = dut.io_debug_vector_store_data[group * 8 + byte / 4] >> ((byte % 4) * 8);
+                stores.emplace_back(byteAddress, got);
+            }
+        };
+        if (scattered) {
+            for (unsigned reg = 0; reg < fieldRegisters; ++reg)
+                for (unsigned byte = 0; byte < 32; byte += elementBytes)
+                    for (unsigned field = 0; field < fields; ++field)
+                        collect(field * fieldRegisters + reg, byte, byte + elementBytes);
+        } else {
+            for (unsigned group = 0; group < count; ++group) { collect(group, 0, 32); }
+        }
+        // Compare the final value at each address after applying writes in drain
+        // order. Earlier elements may legally be overwritten by later ones.
+        std::unordered_map<uint32_t, uint8_t> finalBytes;
+        for (const auto &[address, value] : stores) { finalBytes[address] = value; }
+        for (const auto &[address, value] : finalBytes) {
+            const uint8_t expectedByte = reference.memoryByte(address);
+            if (value != expectedByte) {
+                std::ostringstream error;
+                error << "vector Store final byte at 0x" << std::hex << address
+                      << " differs: DUT=0x" << unsigned(value) << " reference=0x" << unsigned(expectedByte);
+                return error.str();
+            }
+        }
+        auto expected = vector.stores;
+        std::sort(stores.begin(), stores.end());
+        std::sort(expected.begin(), expected.end());
+        if (stores != expected) {
+            std::ostringstream error;
+            error << "vector Store address, byte mask or data differs: DUT=" << stores.size()
+                  << " bytes reference=" << expected.size() << " bytes tasks=" << count
+                  << " vl=" << vector.before.vl << " vtype=0x" << std::hex << vector.before.vtype;
+            for (unsigned task = 0; task < count; ++task) {
+                error << " [" << task << ":addr=0x" << dut.io_debug_vector_store_addresses[task]
+                      << ",mask=0x" << dut.io_debug_vector_store_masks[task] << "]";
+            }
+            const auto mismatch = std::mismatch(stores.begin(), stores.end(), expected.begin(), expected.end());
+            if (mismatch.first != stores.end()) {
+                error << " DUT first=0x" << std::hex << mismatch.first->first << "/" << unsigned(mismatch.first->second);
+            }
+            if (mismatch.second != expected.end()) {
+                error << " reference first=0x" << std::hex << mismatch.second->first << "/" << unsigned(mismatch.second->second);
+            }
+            return error.str();
+        }
+    }
+    const unsigned memoryWidth = (commit.instruction >> 12) & 7u;
+    const bool wholeMemory = (opcode == 0x07u || opcode == 0x27u) &&
+        ((commit.instruction >> 26) & 3u) == 0 && ((commit.instruction >> 20) & 31u) == 8;
+    const bool maskMemory = (opcode == 0x07u || opcode == 0x27u) &&
+        ((commit.instruction >> 26) & 3u) == 0 && ((commit.instruction >> 20) & 31u) == 11;
+    const unsigned function = commit.instruction >> 26;
+    const unsigned form = (commit.instruction >> 12) & 7u;
+    const unsigned unary = (commit.instruction >> 15) & 31u;
+    const bool integerForm = form == 0 || form == 3 || form == 4;
+    const bool floatingForm = form == 1 || form == 5;
+    const bool maskDestination = opcode == 0x57u && (
+        (integerForm && ((function >= 0x18 && function <= 0x1f) || function == 0x11 || function == 0x13)) ||
+        (floatingForm && (function == 0x18 || function == 0x19 || function == 0x1b ||
+            function == 0x1c || function == 0x1d || function == 0x1f)) ||
+        (form == 2 && ((function >= 0x18 && function <= 0x1f) ||
+            (function == 0x14 && unary < 16))));
+    const bool maskIsData = opcode == 0x57u &&
+        ((integerForm && function >= 0x10 && function <= 0x13) ||
+            ((integerForm || form == 5) && function == 0x17));
+    const bool scalarInsert = opcode == 0x57u && function == 0x10 && (form == 5 || form == 6);
+    const bool reduction = opcode == 0x57u && ((form == 2 && function <= 7) ||
+        (form == 1 && (function == 1 || function == 3 || function == 5 || function == 7)) ||
+        (form == 0 && (function == 0x30 || function == 0x31)));
+    const bool widening = opcode == 0x57u && (((form == 2 || form == 6) && function >= 0x30) ||
+        (form == 0 && (function == 0x30 || function == 0x31)) ||
+        (form == 1 && function == 0x12 && (unary == 10 || unary == 11)));
+    const bool wholeMove = opcode == 0x57u && form == 3 && function == 0x27;
+    const bool indexedMemory = (opcode == 0x07u || opcode == 0x27u) && ((commit.instruction >> 26) & 1u);
+    const bool compress = opcode == 0x57u && form == 2 && function == 0x17;
+    unsigned compressedElements = 0;
+    if (compress) for (unsigned index = 0; index < vector.before.vl; ++index)
+        compressedElements += (vector.selectionMask[index / 32] >> (index % 32)) & 1u;
+    const unsigned bits = maskDestination ? 1 : opcode == 0x07u && !indexedMemory ? (memoryWidth == 0 ? 8 : memoryWidth == 5 ? 16 : 32) :
+        (8u << ((vector.before.vtype >> 3) & 7u)) << unsigned(widening);
+    const bool unmasked = (commit.instruction & (1u << 25)) != 0;
+    for (unsigned group = 0; group < trace.count; ++group) {
+        const unsigned reg = trace.base + group;
+        const unsigned physical = (trace.physical >> (group * 6)) & 63u;
+        std::array<uint32_t, 8> actual;
+        for (unsigned word = 0; word < 8; ++word) {
+            actual[word] = dut.io_debug_vector_registers[physical * 8 + word];
+        }
+        const auto expected = reference.vectorRegister(reg);
+        const uint32_t elementMask = bits == 32 ? ~uint32_t{0} : (uint32_t{1} << bits) - 1;
+        for (unsigned element = 0; element < 256 / bits; ++element) {
+            const unsigned fields = opcode == 0x07u && !wholeMemory ? ((commit.instruction >> 29) & 7u) + 1u : 1;
+            const unsigned registersPerField = std::max(1u, unsigned(trace.count) / fields);
+            const unsigned index = (group % registersPerField) * (256 / bits) + element;
+            const unsigned bit = element * bits;
+            const uint32_t got = (actual[bit / 32] >> (bit % 32)) & elementMask;
+            const uint32_t wanted = (expected[bit / 32] >> (bit % 32)) & elementMask;
+            const bool enabled = unmasked || ((vector.mask[index / 32] >> (index % 32)) & 1u);
+            const unsigned effectiveVl = wholeMemory || wholeMove ? trace.count * (256 / bits) :
+                maskMemory ? (vector.before.vl + 7) / 8 : vector.before.vl;
+            const bool tail = index >= (compress ? compressedElements : effectiveVl) ||
+                ((scalarInsert || reduction) && index > 0);
+            const bool agnostic = !wholeMemory && !wholeMove && vector.before.vstart < effectiveVl && index >= vector.before.vstart &&
+                (tail ? (maskDestination || maskMemory || (vector.before.vtype & 64u) != 0) :
+                    !maskIsData && !enabled && (vector.before.vtype & 128u) != 0);
+            if (got != (agnostic ? elementMask : wanted)) {
+                std::ostringstream error;
+                error << "v" << reg << " element " << element << " differs: DUT=0x" << std::hex << got
+                      << " reference=0x" << (agnostic ? elementMask : wanted);
+                return error.str();
+            }
+        }
+        // Match the implementation's allowed all-one agnostic choice before
+        // the reference consumes this register in a later instruction.
+        reference.vectorRegister(reg, actual);
+    }
+    return std::nullopt;
+}
+#endif
+
 constexpr const char *kAnsiReset = "\033[0m";
 constexpr const char *kAnsiRed = "\033[1;31m";
 constexpr const char *kAnsiGreen = "\033[1;32m";
@@ -51,7 +233,7 @@ constexpr const char *kAnsiCyan = "\033[1;36m";
 constexpr const char *kSeparator = "============================================================";
 #ifdef ZIRCON_ENABLE_CHECKPOINTS
 constexpr uint64_t kCheckpointMagic = UINT64_C(0x5a4952434f4e4350);
-constexpr uint32_t kCheckpointVersion = 3;
+constexpr uint32_t kCheckpointVersion = 5;
 #endif
 
 struct RunMetrics {
@@ -545,10 +727,15 @@ bool waveEnabled(const Options &options, uint64_t cycle) {
 }
 
 void driveInterrupts(VZirconCore &dut, bool timerInterrupt) {
+#ifndef ZIRCON_PERFORMANCE_CORE
     dut.io_interrupts_meip = 0;
     dut.io_interrupts_msip = 0;
     dut.io_interrupts_mtip = timerInterrupt;
     dut.io_interrupts_seip = 0;
+#else
+    (void)dut;
+    (void)timerInterrupt;
+#endif
 }
 
 zircon::sim::PerformanceSnapshot readPerformance(const VZirconCore &dut) {
@@ -701,6 +888,8 @@ void saveCheckpoint(const std::string &base, const Options &options, uint64_t im
         zircon::sim::CheckpointWriter writer(hostTemporary);
         writer.write(kCheckpointMagic);
         writer.write(kCheckpointVersion);
+        writer.writeString(std::string(ZIRCON_CORE_PROFILE) + ":vlen=" + std::to_string(ZIRCON_VLEN) +
+                           ":axi=" + std::to_string(ZIRCON_AXI_DATA_BITS) + ":cxx=" + __VERSION__);
         writer.write(imageFingerprint);
         writer.write(rtlFingerprint);
         writer.write(static_cast<uint8_t>(options.platform));
@@ -768,6 +957,11 @@ void restoreCheckpoint(const std::string &base, const Options &options, uint64_t
     const uint32_t checkpointVersion = reader.read<uint32_t>();
     if (checkpointVersion != kCheckpointVersion) {
         throw std::runtime_error("checkpoint host state uses an unsupported version");
+    }
+    const std::string buildIdentity = std::string(ZIRCON_CORE_PROFILE) + ":vlen=" + std::to_string(ZIRCON_VLEN) +
+                                     ":axi=" + std::to_string(ZIRCON_AXI_DATA_BITS) + ":cxx=" + __VERSION__;
+    if (reader.readString(4096) != buildIdentity) {
+        throw std::runtime_error("checkpoint core configuration or compiler does not match this build");
     }
     if (reader.read<uint64_t>() != imageFingerprint) {
         throw std::runtime_error("checkpoint was created for a different ELF image");
@@ -1102,6 +1296,15 @@ int main(int argc, char **argv) {
                             expected.write_valid != retire_write_valid ||
                             (expected.write_valid && (expected.is_fp != retire_is_fp || expected.rd != retire_rd ||
                                                       expected.value != retire_value));
+#ifdef ZIRCON_PERFORMANCE_CORE
+                        const auto vectorMismatch = compareVectorCommit(dut, lane, expected, *reference);
+                        if (vectorMismatch.has_value()) {
+                            progress_reporter.finish();
+                            std::cerr << "VECTOR DIFFTEST FAILED at cycle " << cycle + 1 << ", pc=0x" << std::hex
+                                << retire_pc << ": " << *vectorMismatch << '\n';
+                            dut.final(); closeTrace(); return 126;
+                        }
+#endif
                         if (expected.pc != retire_pc || expected.instruction != retire_instruction ||
                             (!synchronize && destinationMismatch)) {
                             const std::string csr_context = csrContext(dut);

@@ -49,6 +49,12 @@ add_executable(zircon-sim
     src/Statistic.cc
 )
 target_compile_features(zircon-sim PRIVATE cxx_std_20)
+if(ZIRCON_CORE_PROFILE STREQUAL "performance")
+    target_compile_definitions(zircon-sim PRIVATE ZIRCON_PERFORMANCE_CORE=1 ZIRCON_AXI_DATA_BITS=256 ZIRCON_VLEN=256)
+else()
+    target_compile_definitions(zircon-sim PRIVATE ZIRCON_AXI_DATA_BITS=64 ZIRCON_VLEN=0)
+endif()
+target_compile_definitions(zircon-sim PRIVATE ZIRCON_CORE_PROFILE="${ZIRCON_CORE_PROFILE}")
 target_compile_options(zircon-sim PRIVATE
     -Wall
     -Wextra
