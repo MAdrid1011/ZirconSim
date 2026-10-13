@@ -60,3 +60,4 @@ cmake --build build/performance --target coremark
 
 SIMD 五项计算程序、SGEMM 与吞吐测试位于 `RV-Software/simd/`；官方单精度负载位于
 `RV-Software/coremark-pro/`。完整系统与性能核心的 RTL、仿真器和软件使用独立生成目录。
+性能报告按核心配置、VLEN、AXI 宽度和宿主编译器版本保存在 `reports/` 的对应子目录。
