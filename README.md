@@ -57,6 +57,9 @@ cmake --build build/performance --target coremark
 默认保留差分与动态进度；`time` 使用核心周期时基。
 `coremark` 构建目标按核心配置选择对应软件。Verilator 线程池使用已编译模型的线程数；
 同时运行多个仿真时，为各进程分配互不重叠的 CPU，避免运行线程争用。
+模型热路径与 Verilator 公共运行库使用 `-O3`，初始化代码单独编译。
+`ZIRCON_SIM_ENABLE_THIN_LTO` 和 `ZIRCON_SIM_PGO_MODE` 分别控制 ThinLTO 与 PGO；
+LLVM profile 工具和链接器应与宿主 Clang 使用相同主版本。
 
 SIMD 五项计算程序、SGEMM 与吞吐测试位于 `RV-Software/simd/`；官方单精度负载位于
 `RV-Software/coremark-pro/`。完整系统与性能核心的 RTL、仿真器和软件使用独立生成目录。
