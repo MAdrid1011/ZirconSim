@@ -250,11 +250,11 @@ if(MAKE_EXECUTABLE AND EXISTS "${ZIRCON_RV_SOFTWARE_DIR}/coremark/Makefile")
         COMMAND_ERROR_IS_FATAL ANY
     )
     file(GLOB ZIRCON_SIMD_RUNTIME_SOURCES CONFIGURE_DEPENDS
-        "${ZIRCON_RV_SOFTWARE_DIR}/simd/*.c"
-        "${ZIRCON_RV_SOFTWARE_DIR}/simd/*.h"
-        "${ZIRCON_RV_SOFTWARE_DIR}/simd/*.py"
-        "${ZIRCON_RV_SOFTWARE_DIR}/simd/*.S"
-        "${ZIRCON_RV_SOFTWARE_DIR}/simd/*.ld"
+        "${ZIRCON_RV_SOFTWARE_DIR}/simd/runtime/*.c"
+        "${ZIRCON_RV_SOFTWARE_DIR}/simd/runtime/*.h"
+        "${ZIRCON_RV_SOFTWARE_DIR}/simd/runtime/*.S"
+        "${ZIRCON_RV_SOFTWARE_DIR}/simd/runtime/*.ld"
+        "${ZIRCON_RV_SOFTWARE_DIR}/simd/tools/compile_scalar.py"
         "${ZIRCON_RV_SOFTWARE_DIR}/simd/Makefile"
     )
     file(GLOB ZIRCON_COREMARK_SOURCES CONFIGURE_DEPENDS
