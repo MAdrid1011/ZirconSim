@@ -126,7 +126,7 @@ void Statistic::restore(CheckpointReader &reader) {
 
 std::string Statistic::writeMarkdownReport(const std::string &elf, uint64_t cycles, uint64_t retiredInstructions,
                                            double elapsedSeconds, double cyclesPerSecond) const {
-    const std::filesystem::path directory = "reports";
+    const std::filesystem::path directory = std::filesystem::path("reports") / ZIRCON_SIM_BUILD_ID;
     std::filesystem::create_directories(directory);
     const std::filesystem::path path = directory / ("report-" + reportName(elf) + ".md");
     std::ofstream output(path);
@@ -134,6 +134,7 @@ std::string Statistic::writeMarkdownReport(const std::string &elf, uint64_t cycl
         throw std::runtime_error("failed to create statistics report: " + path.string());
     }
     output << std::fixed << std::setprecision(3);
+    output << "仿真构建：`" << ZIRCON_SIM_BUILD_ID << "`\n\n";
     const double ipc = cycles == 0 ? 0.0 : static_cast<double>(retiredInstructions) / cycles;
     output << "## 程序基本情况\n"
            << "| 程序名 | 总周期数 | 总指令数 | IPC | 仿真时间（秒） | 仿真速度（周期/秒） |\n"

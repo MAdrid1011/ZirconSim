@@ -49,6 +49,19 @@ add_executable(zircon-sim
     src/Statistic.cc
 )
 target_compile_features(zircon-sim PRIVATE cxx_std_20)
+if(ZIRCON_CORE_PROFILE STREQUAL "performance")
+    set(ZIRCON_SIM_VLEN 256)
+    set(ZIRCON_SIM_AXI_BITS 256)
+    target_compile_definitions(zircon-sim PRIVATE ZIRCON_PERFORMANCE_CORE=1 ZIRCON_AXI_DATA_BITS=256 ZIRCON_VLEN=256)
+else()
+    set(ZIRCON_SIM_VLEN 0)
+    set(ZIRCON_SIM_AXI_BITS 64)
+    target_compile_definitions(zircon-sim PRIVATE ZIRCON_AXI_DATA_BITS=64 ZIRCON_VLEN=0)
+endif()
+set(ZIRCON_SIM_BUILD_ID "${ZIRCON_CORE_PROFILE}-vlen${ZIRCON_SIM_VLEN}-axi${ZIRCON_SIM_AXI_BITS}-${CMAKE_CXX_COMPILER_ID}${CMAKE_CXX_COMPILER_VERSION}")
+target_compile_definitions(zircon-sim PRIVATE ZIRCON_SIM_BUILD_ID="${ZIRCON_SIM_BUILD_ID}")
+target_compile_definitions(zircon-sim PRIVATE ZIRCON_CORE_PROFILE="${ZIRCON_CORE_PROFILE}")
+target_compile_definitions(zircon-sim PRIVATE ZIRCON_MODEL_THREADS=${ZIRCON_VERILATOR_THREADS})
 target_compile_options(zircon-sim PRIVATE
     -Wall
     -Wextra
@@ -63,6 +76,7 @@ set(ZIRCON_VERILATOR_DEBUG_ARGS)
 set(ZIRCON_VERILATOR_CXX_FLAGS "-std=c++20")
 set(ZIRCON_VERILATOR_OPT_FAST "-O3")
 set(ZIRCON_VERILATOR_OPT_SLOW "-O0")
+set(ZIRCON_VERILATOR_OPT_GLOBAL "-O3")
 if(ZIRCON_SIM_NATIVE_OPTIMIZATION)
     check_cxx_compiler_flag("-march=native" ZIRCON_CXX_SUPPORTS_MARCH_NATIVE)
     if(ZIRCON_CXX_SUPPORTS_MARCH_NATIVE)
@@ -147,7 +161,7 @@ add_custom_command(
         --build
         --build-jobs "${ZIRCON_VERILATOR_BUILD_JOBS}"
         -MAKEFLAGS
-            "CXX='${CMAKE_CXX_COMPILER}' LINK='${CMAKE_CXX_COMPILER}' AR='${ZIRCON_VERILATOR_AR}' OPT_FAST='${ZIRCON_VERILATOR_OPT_FAST}' OPT_SLOW='${ZIRCON_VERILATOR_OPT_SLOW}' OPT_GLOBAL='${ZIRCON_VERILATOR_OPT_SLOW}'"
+            "CXX='${CMAKE_CXX_COMPILER}' LINK='${CMAKE_CXX_COMPILER}' AR='${ZIRCON_VERILATOR_AR}' OPT_FAST='${ZIRCON_VERILATOR_OPT_FAST}' OPT_SLOW='${ZIRCON_VERILATOR_OPT_SLOW}' OPT_GLOBAL='${ZIRCON_VERILATOR_OPT_GLOBAL}'"
         --prefix VZirconCore
         --top-module ZirconCore
         --Mdir "${ZIRCON_VERILATED_DIR}"
@@ -211,6 +225,7 @@ add_executable(zircon-sim-unit
     tests/UnitTests.cc
 )
 target_compile_features(zircon-sim-unit PRIVATE cxx_std_20)
+target_compile_definitions(zircon-sim-unit PRIVATE ZIRCON_SIM_BUILD_ID="${ZIRCON_SIM_BUILD_ID}")
 target_compile_options(zircon-sim-unit PRIVATE -Wall -Wextra -Werror -UNDEBUG)
 target_include_directories(zircon-sim-unit PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include")
 target_link_libraries(zircon-sim-unit PRIVATE PkgConfig::SPIKE)
@@ -227,6 +242,36 @@ set(ZIRCON_TEST_ELF "" CACHE FILEPATH
 
 find_program(MAKE_EXECUTABLE make)
 if(MAKE_EXECUTABLE AND EXISTS "${ZIRCON_RV_SOFTWARE_DIR}/coremark/Makefile")
+  if(ZIRCON_CORE_PROFILE STREQUAL "performance")
+    execute_process(
+        COMMAND "${MAKE_EXECUTABLE}" -s --no-print-directory -C "${ZIRCON_RV_SOFTWARE_DIR}/simd" print-coremark-elf
+        OUTPUT_VARIABLE ZIRCON_COREMARK_ELF
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        COMMAND_ERROR_IS_FATAL ANY
+    )
+    file(GLOB ZIRCON_SIMD_RUNTIME_SOURCES CONFIGURE_DEPENDS
+        "${ZIRCON_RV_SOFTWARE_DIR}/simd/runtime/*.c"
+        "${ZIRCON_RV_SOFTWARE_DIR}/simd/runtime/*.h"
+        "${ZIRCON_RV_SOFTWARE_DIR}/simd/runtime/*.S"
+        "${ZIRCON_RV_SOFTWARE_DIR}/simd/runtime/*.ld"
+        "${ZIRCON_RV_SOFTWARE_DIR}/simd/tools/compile_scalar.py"
+        "${ZIRCON_RV_SOFTWARE_DIR}/simd/Makefile"
+    )
+    file(GLOB ZIRCON_COREMARK_SOURCES CONFIGURE_DEPENDS
+        "${ZIRCON_RV_SOFTWARE_DIR}/coremark/src/*.c"
+        "${ZIRCON_RV_SOFTWARE_DIR}/coremark/include/*.h"
+        "${ZIRCON_RV_SOFTWARE_DIR}/base-port/tool/src/*.c"
+        "${ZIRCON_RV_SOFTWARE_DIR}/base-port/tool/include/*.h"
+        "${ZIRCON_RV_SOFTWARE_DIR}/base-port/base/include/*.h"
+    )
+    add_custom_command(
+        OUTPUT "${ZIRCON_COREMARK_ELF}"
+        COMMAND "${MAKE_EXECUTABLE}" -C "${ZIRCON_RV_SOFTWARE_DIR}/simd" coremark
+        DEPENDS ${ZIRCON_SIMD_RUNTIME_SOURCES} ${ZIRCON_COREMARK_SOURCES}
+        COMMENT "Building scalar CoreMark for the SIMD8 performance core"
+        VERBATIM
+    )
+  else()
     set(ZIRCON_COREMARK_BUILD_ELF
         "${ZIRCON_RV_SOFTWARE_DIR}/coremark/build/coremark-i30-rv32imaf_zicsr_zifencei-ilp32f.elf"
     )
@@ -253,6 +298,7 @@ if(MAKE_EXECUTABLE AND EXISTS "${ZIRCON_RV_SOFTWARE_DIR}/coremark/Makefile")
         COMMENT "Building the RV32 CoreMark benchmark"
         VERBATIM
     )
+  endif()
     add_custom_target(zircon-coremark-software DEPENDS "${ZIRCON_COREMARK_ELF}")
     add_custom_target(coremark
         COMMAND "$<TARGET_FILE:zircon-sim>"
@@ -268,7 +314,7 @@ if(MAKE_EXECUTABLE AND EXISTS "${ZIRCON_RV_SOFTWARE_DIR}/coremark/Makefile")
     )
 endif()
 
-if(MAKE_EXECUTABLE AND EXISTS "${ZIRCON_RV_SOFTWARE_DIR}/functest/Makefile")
+if(ZIRCON_CORE_PROFILE STREQUAL "system" AND MAKE_EXECUTABLE AND EXISTS "${ZIRCON_RV_SOFTWARE_DIR}/functest/Makefile")
     file(GLOB_RECURSE ZIRCON_FUNCTEST_COMMON_SOURCES CONFIGURE_DEPENDS
         "${ZIRCON_RV_SOFTWARE_DIR}/base-port/*.c"
         "${ZIRCON_RV_SOFTWARE_DIR}/base-port/*.h"

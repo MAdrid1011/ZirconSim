@@ -42,6 +42,15 @@ bool dutSupportsCsr(reg_t address) {
         return true;
     }
     switch (address) {
+#ifdef ZIRCON_PERFORMANCE_CORE
+    case CSR_VSTART:
+    case CSR_VXSAT:
+    case CSR_VXRM:
+    case CSR_VCSR:
+    case CSR_VL:
+    case CSR_VTYPE:
+    case CSR_VLENB:
+#endif
     case CSR_FFLAGS:
     case CSR_FRM:
     case CSR_FCSR:
@@ -139,7 +148,13 @@ std::optional<SpikeCommit> parseSpikeCommitLine(const std::string &line) {
 class SpikeReference::Impl : public simif_t {
   public:
     Impl(const SparseMemory &memory, uint32_t entry, bool linuxPlatform, std::string uartInput)
-        : memory_(memory), isa_("RV32IMAF_Zicsr_Zifencei_Zaamo_Zalrsc_Zicntr_Zihpm", "MSU") {
+        : memory_(memory), isa_(
+#ifdef ZIRCON_PERFORMANCE_CORE
+              "RV32IMF_Zicsr_Zicntr_Zve32f_Zvl256b", "M"
+#else
+              "RV32IMAF_Zicsr_Zifencei_Zaamo_Zalrsc_Zicntr_Zihpm", "MSU"
+#endif
+          ) {
         if (linuxPlatform) {
             platform_ = std::make_unique<PlatformDevices>(false, std::move(uartInput));
         }
@@ -150,13 +165,24 @@ class SpikeReference::Impl : public simif_t {
             throw std::runtime_error("failed to open the Spike commit-log sink");
         }
         processor_ = std::make_unique<processor_t>(&isa_, &cfg_, this, 0, false, log_.get(), output_);
+#ifdef ZIRCON_PERFORMANCE_CORE
+        // Spike's execution environment enables FP/vector state once; the DUT
+        // has no privilege state or privileged startup instructions.
+        processor_->get_state()->mstatus->write(MSTATUS_FS | MSTATUS_VS);
+        processor_->VU.vstart_alu = true;
+        if (processor_->VU.VLEN != 256 || processor_->VU.ELEN != 32) {
+            throw std::runtime_error("performance reference requires VLEN256/ELEN32");
+        }
+#endif
         harts_.emplace(0, processor_.get());
         auto &csrMap = processor_->get_state()->csrmap;
+#ifndef ZIRCON_PERFORMANCE_CORE
         const auto menvcfgh = csrMap.find(CSR_MENVCFGH);
         if (menvcfgh == csrMap.end()) {
             throw std::runtime_error("Spike does not expose menvcfgh.ADUE");
         }
         menvcfgh->second->write(menvcfgh->second->read() & ~reg_t{MENVCFGH_ADUE});
+#endif
         for (auto csr = csrMap.begin(); csr != csrMap.end();) {
             csr = dutSupportsCsr(csr->first) ? std::next(csr) : csrMap.erase(csr);
         }
@@ -221,6 +247,20 @@ class SpikeReference::Impl : public simif_t {
             } catch (const trap_t &) {
                 // Let processor_t take the fetch exception and advance to the trap handler below.
             }
+#ifdef ZIRCON_PERFORMANCE_CORE
+            if (fetchedInstruction.has_value()) {
+                const uint32_t instruction = *fetchedInstruction;
+                const uint32_t opcode = instruction & 0x7fu;
+                const uint32_t width = (instruction >> 12) & 7u;
+                if (opcode == 0x57u || ((opcode == 0x07u || opcode == 0x27u) && width != 2u)) {
+                    commit.vector.emplace();
+                    commit.vector->before = vectorState();
+                    std::memcpy(commit.vector->mask.data(), processor_->VU.reg_file, 32);
+                    std::memcpy(commit.vector->selectionMask.data(),
+                        static_cast<const uint8_t *>(processor_->VU.reg_file) + ((instruction >> 15) & 31u) * 32, 32);
+                }
+            }
+#endif
 
             const reg_t enabledInterrupts = state->mie->read();
             const bool suppressInterrupts =
@@ -247,7 +287,15 @@ class SpikeReference::Impl : public simif_t {
                 (static_cast<uint32_t>(state->mepc->read()) == commit.pc && nextPc == machineVector) ||
                 (static_cast<uint32_t>(state->sepc->read()) == commit.pc && nextPc == supervisorVector);
             if (trapped) {
+#ifdef ZIRCON_PERFORMANCE_CORE
+                std::ostringstream error;
+                error << "performance reference trapped at PC 0x" << std::hex << commit.pc
+                      << " instruction 0x" << fetchedInstruction.value_or(0)
+                      << " cause " << std::dec << state->mcause->read();
+                throw std::runtime_error(error.str());
+#else
                 continue;
+#endif
             }
             if (!fetchedInstruction.has_value()) {
                 throw std::runtime_error("Spike retired an instruction that could not be fetched");
@@ -255,6 +303,13 @@ class SpikeReference::Impl : public simif_t {
             commit.instruction = *fetchedInstruction;
             for (const auto &[encodedRegister, value] : state->log_reg_write) {
                 const reg_t kind = encodedRegister & 0xf;
+                if (kind == 2 && commit.vector.has_value()) {
+                    SpikeVectorRegister reg;
+                    reg.index = static_cast<uint8_t>(encodedRegister >> 4);
+                    std::memcpy(reg.words.data(), static_cast<const uint8_t *>(processor_->VU.reg_file) +
+                        reg.index * 32, 32);
+                    commit.vector->registers.push_back(reg);
+                }
                 if (kind != 0 && kind != 1) {
                     continue;
                 }
@@ -272,6 +327,15 @@ class SpikeReference::Impl : public simif_t {
                 commit.is_fp = kind == 1;
                 commit.rd = static_cast<uint8_t>(index);
                 commit.value = static_cast<uint32_t>(value.v[0]);
+            }
+            if (commit.vector.has_value()) {
+                commit.vector->after = vectorState();
+                for (const auto &[address, value, size] : state->log_mem_write) {
+                    for (unsigned byte = 0; byte < size; ++byte) {
+                        commit.vector->stores.emplace_back(static_cast<uint32_t>(address + byte),
+                            static_cast<uint8_t>(value >> (8 * byte)));
+                    }
+                }
             }
             const uint32_t opcode = commit.instruction & 0x7fu;
             if (opcode == 0x23u) {
@@ -321,6 +385,32 @@ class SpikeReference::Impl : public simif_t {
         return static_cast<uint32_t>(processor_->get_state()->XPR[index]);
     }
 
+    void vectorRegister(size_t index, const std::array<uint32_t, 8> &words) {
+        if (index >= 32 || processor_->VU.VLEN != 256) {
+            throw std::out_of_range("Spike vector register shape is invalid");
+        }
+        std::memcpy(static_cast<uint8_t *>(processor_->VU.reg_file) + index * 32, words.data(), 32);
+    }
+
+    std::array<uint32_t, 8> vectorRegister(size_t index) const {
+        if (index >= 32 || processor_->VU.VLEN != 256) {
+            throw std::out_of_range("Spike vector register shape is invalid");
+        }
+        std::array<uint32_t, 8> words;
+        std::memcpy(words.data(), static_cast<const uint8_t *>(processor_->VU.reg_file) + index * 32, 32);
+        return words;
+    }
+
+    SpikeVectorState vectorState() const {
+        const auto &vu = processor_->VU;
+        const auto *state = processor_->get_state();
+        return {static_cast<uint32_t>(vu.vl->read()), static_cast<uint32_t>(vu.vtype->read()),
+            static_cast<uint32_t>(vu.vstart->read()), static_cast<uint8_t>(vu.vxrm->read()),
+            vu.vxsat->read() != 0, static_cast<uint8_t>(state->fflags->read())};
+    }
+
+    uint8_t memoryByte(uint32_t address) const { return memory_.read8(address); }
+
     std::string diagnosticContext() const {
         const state_t *const state = processor_->get_state();
         std::ostringstream stream;
@@ -346,6 +436,11 @@ class SpikeReference::Impl : public simif_t {
             writer.write<uint64_t>(state->FPR[index].v[0]);
             writer.write<uint64_t>(state->FPR[index].v[1]);
         }
+#ifdef ZIRCON_PERFORMANCE_CORE
+        writer.write(vectorState());
+        writer.writeBytes(processor_->VU.reg_file, 32 * 32);
+        writer.write(processor_->VU.setvl_count);
+#endif
         std::vector<std::pair<reg_t, reg_t>> csrs;
         csrs.reserve(state->csrmap.size());
         for (const auto &[address, csr] : state->csrmap) {
@@ -379,6 +474,12 @@ class SpikeReference::Impl : public simif_t {
             value.v[0] = reader.read<uint64_t>();
             value.v[1] = reader.read<uint64_t>();
         }
+#ifdef ZIRCON_PERFORMANCE_CORE
+        const auto vector = reader.read<SpikeVectorState>();
+        std::array<uint8_t, 32 * 32> vectorBytes{};
+        reader.readBytes(vectorBytes.data(), vectorBytes.size());
+        const auto setvlCount = reader.read<int>();
+#endif
         const uint64_t csrCount = reader.readCount(4096, "Spike CSR");
         std::vector<std::pair<reg_t, reg_t>> csrs;
         csrs.reserve(static_cast<size_t>(csrCount));
@@ -422,6 +523,15 @@ class SpikeReference::Impl : public simif_t {
         for (size_t index = 0; index < floating.size(); ++index) {
             state->FPR.write(index, floating[index]);
         }
+#ifdef ZIRCON_PERFORMANCE_CORE
+        processor_->VU.vtype->write_raw(~reg_t{vector.vtype});
+        processor_->VU.set_vl(0, 1, vector.vl, vector.vtype);
+        processor_->VU.vstart->write_raw(vector.vstart);
+        processor_->VU.vxrm->write_raw(vector.vxrm);
+        processor_->VU.vxsat->write(vector.vxsat);
+        processor_->VU.setvl_count = setvlCount;
+        std::memcpy(processor_->VU.reg_file, vectorBytes.data(), vectorBytes.size());
+#endif
         state->pc = pc;
         processor_->set_privilege(privilege, false);
         processor_->get_mmu()->flush_tlb();
@@ -545,6 +655,15 @@ void SpikeReference::injectInterrupt(const SpikeTrap &trap) { impl_->injectInter
 void SpikeReference::injectPageFault(const SpikeTrap &trap) { impl_->injectPageFault(trap); }
 
 uint32_t SpikeReference::integerRegister(size_t index) const { return impl_->integerRegister(index); }
+
+void SpikeReference::vectorRegister(size_t index, const std::array<uint32_t, 8> &words) {
+    impl_->vectorRegister(index, words);
+}
+
+std::array<uint32_t, 8> SpikeReference::vectorRegister(size_t index) const { return impl_->vectorRegister(index); }
+
+SpikeVectorState SpikeReference::vectorState() const { return impl_->vectorState(); }
+uint8_t SpikeReference::memoryByte(uint32_t address) const { return impl_->memoryByte(address); }
 
 std::string SpikeReference::diagnosticContext() const { return impl_->diagnosticContext(); }
 
