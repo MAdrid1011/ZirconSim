@@ -35,6 +35,9 @@ make -C RV-Software/linux-system linux
 - `--seed` 指定可重复的初始化种子；`--max-cycles` 指定运行周期上限。
 - `--no-color` 和 `--no-progress` 控制终端输出；`--uart-stdio` 将 UART 连接到当前终端。
 - `--checkpoint-save`、`--checkpoint-load` 与 `--checkpoint-interval` 保存和恢复长时间仿真。
+- `--instruction-profile <文件.csv>` 按 PC 导出本次运行的实际退休指令数量，字段为
+  `pc,instruction,retired`。统计从本次启动或检查点恢复开始，适合结合 ELF 符号核对循环中的
+  算术指令数；默认关闭，不修改硬件计数器。
 
 性能计数器在程序结束时汇总为 Markdown 报告。`zircon-sim-unit` 验证随机数生成与 RV32
 ELF 装载，包括 `PT_LOAD`、入口地址和 `tohost/fromhost` 符号。功能测试目标使用

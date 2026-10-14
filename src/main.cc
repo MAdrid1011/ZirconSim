@@ -19,6 +19,7 @@
 #include <iomanip>
 #include <iostream>
 #include <memory>
+#include <map>
 #include <mutex>
 #include <sstream>
 #include <stdexcept>
@@ -297,6 +298,7 @@ enum class PlatformMode {
 
 struct Options {
     std::string elf;
+    std::string instruction_profile;
     std::string uart_input;
     std::string pass_marker;
     std::string checkpoint_save;
@@ -627,12 +629,14 @@ Options parseOptions(int argc, char **argv) {
              argument == "--platform" || argument == "--uart-input" || argument == "--pass-marker" ||
              argument == "--progress-interval" || argument == "--checkpoint-save" || argument == "--checkpoint-load" ||
              argument == "--checkpoint-cycle" || argument == "--checkpoint-interval" ||
-             argument == "--checkpoint-marker") &&
+             argument == "--checkpoint-marker" || argument == "--instruction-profile") &&
             index + 1 >= argc) {
             throw std::invalid_argument("missing value for " + argument);
         }
         if (argument == "--elf") {
             options.elf = argv[++index];
+        } else if (argument == "--instruction-profile") {
+            options.instruction_profile = argv[++index];
         } else if (argument == "--seed") {
             options.seed = parseUnsigned(argv[++index], "--seed");
         } else if (argument == "--max-cycles") {
@@ -1135,6 +1139,9 @@ int main(int argc, char **argv) {
         auto &pending_branch = simulation_state.pending_branch;
         auto &recent_commits = simulation_state.recent_commits;
         auto &recent_commit_count = simulation_state.recent_commit_count;
+        // Optional host-side counts for this invocation; no RTL or normal-run
+        // profiling storage is updated unless an output path is requested.
+        std::map<uint32_t, std::pair<uint32_t, uint64_t>> instruction_profile;
 #ifdef ZIRCON_ENABLE_VCD
         if (options.wave) {
             Verilated::traceEverOn(true);
@@ -1310,6 +1317,11 @@ int main(int argc, char **argv) {
                         }
                     }
                     ++retired_instructions;
+                    if (!options.instruction_profile.empty()) {
+                        auto &entry = instruction_profile[retire_pc];
+                        entry.first = retire_instruction;
+                        ++entry.second;
+                    }
                     if (measured_cycles == 0) {
                         statistic.observeInstruction(retire_instruction);
                     }
@@ -1483,6 +1495,19 @@ int main(int argc, char **argv) {
                 progress_reporter.finish();
                 const RunMetrics metrics = collectMetrics(report_cycles, cycle + 1 - run_start_cycle);
                 const std::string report = writeReport(report_cycles, metrics);
+                if (!options.instruction_profile.empty()) {
+                    std::ofstream output(options.instruction_profile);
+                    if (!output) {
+                        throw std::runtime_error("cannot open instruction profile: " + options.instruction_profile);
+                    }
+                    output << "pc,instruction,retired\n";
+                    for (const auto &[pc, entry] : instruction_profile) {
+                        output << "0x" << std::hex << pc << ",0x" << entry.first << ','
+                               << std::dec << entry.second << '\n';
+                    }
+                    output.close();
+                    if (!output) { throw std::runtime_error("cannot write instruction profile"); }
+                }
                 if (options.branch_profile) {
                     printBranchProfile(branch_profile);
                     const auto performance = measured_performance.value_or(readPerformance(dut));
