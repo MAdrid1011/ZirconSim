@@ -127,6 +127,43 @@ int main(int argc, char **argv) {
     assert(expected_checkpoint_commit->rd == restored_checkpoint_commit->rd);
     assert(expected_checkpoint_commit->value == restored_checkpoint_commit->value);
 
+    zircon::sim::SparseMemory wide_counter_program;
+    wide_counter_program.write32(0x80000000u, 0x123450b7u); // lui x1, 0x12345
+    wide_counter_program.write32(0x80000004u, 0xb8009073u); // csrw mcycleh, x1
+    wide_counter_program.write32(0x80000008u, 0xb8209073u); // csrw minstreth, x1
+    wide_counter_program.write32(0x8000000cu, 0xc8002173u); // csrr x2, cycleh
+    wide_counter_program.write32(0x80000010u, 0xc82021f3u); // csrr x3, instreth
+    wide_counter_program.write32(0x80000014u, 0xc0002273u); // csrr x4, cycle
+    wide_counter_program.write32(0x80000018u, 0xc02022f3u); // csrr x5, instret
+    zircon::sim::SpikeReference wide_counter_reference(wide_counter_program, 0x80000000u);
+    for (uint32_t index = 0; index < 3; ++index) {
+        assert(wide_counter_reference.next()->pc == 0x80000000u + index * 4);
+    }
+    {
+        zircon::sim::CheckpointWriter writer(checkpoint_path);
+        wide_counter_reference.save(writer);
+        writer.close();
+    }
+    zircon::sim::SpikeReference restored_wide_counter_reference(wide_counter_program, 0x80000000u);
+    {
+        zircon::sim::CheckpointReader reader(checkpoint_path);
+        restored_wide_counter_reference.restore(reader);
+        reader.requireEnd();
+    }
+    std::filesystem::remove(checkpoint_path);
+    for (uint32_t index = 0; index < 4; ++index) {
+        const auto expected = wide_counter_reference.next();
+        const auto restored = restored_wide_counter_reference.next();
+        assert(expected.has_value() && restored.has_value());
+        assert(expected->pc == restored->pc);
+        assert(expected->instruction == restored->instruction);
+        assert(expected->write_valid && restored->write_valid);
+        assert(expected->rd == restored->rd && expected->value == restored->value);
+        if (index < 2) {
+            assert(restored->value == 0x12345000u);
+        }
+    }
+
     zircon::sim::SparseMemory counter_program;
     counter_program.write32(0x80000000u, 0xb00022f3u); // csrrs x5, mcycle, x0
     counter_program.write32(0x80000004u, 0x00128313u); // addi x6, x5, 1

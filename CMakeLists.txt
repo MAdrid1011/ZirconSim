@@ -5,7 +5,17 @@ find_package(verilator CONFIG REQUIRED HINTS
 find_package(Threads REQUIRED)
 find_package(PkgConfig REQUIRED)
 include(CheckCXXCompilerFlag)
-pkg_check_modules(SPIKE REQUIRED IMPORTED_TARGET riscv-riscv)
+set(ZIRCON_SPIKE_ROOT "" CACHE PATH "Installation prefix of the Spike development library")
+set(ZIRCON_SPIKE_MODULE riscv-riscv)
+if(ZIRCON_SPIKE_ROOT)
+    set(ZIRCON_SPIKE_MODULE "${ZIRCON_SPIKE_ROOT}/lib/pkgconfig/riscv-riscv.pc")
+endif()
+if(NOT ZIRCON_SPIKE_MODULE STREQUAL ZIRCON_PREVIOUS_SPIKE_MODULE)
+    unset(__pkg_config_checked_SPIKE CACHE)
+    unset(pkgcfg_lib_SPIKE_riscv CACHE)
+endif()
+pkg_check_modules(SPIKE REQUIRED IMPORTED_TARGET "${ZIRCON_SPIKE_MODULE}")
+set(ZIRCON_PREVIOUS_SPIKE_MODULE "${ZIRCON_SPIKE_MODULE}" CACHE INTERNAL "Selected Spike package")
 find_program(VERILATOR_EXECUTABLE verilator REQUIRED)
 
 option(ZIRCON_SIM_ENABLE_VCD "Build zircon-sim with bounded VCD tracing support" OFF)
@@ -232,6 +242,26 @@ target_link_libraries(zircon-sim-unit PRIVATE PkgConfig::SPIKE)
 set_target_properties(zircon-sim-unit PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
+
+if(ZIRCON_CORE_PROFILE STREQUAL "performance")
+    add_executable(zircon-spike-vector-unit
+        src/Checkpoint.cc
+        src/ElfImage.cc
+        src/PlatformDevices.cc
+        src/SpikeReference.cc
+        tests/VectorReferenceTests.cc
+    )
+    target_compile_features(zircon-spike-vector-unit PRIVATE cxx_std_20)
+    target_compile_definitions(zircon-spike-vector-unit PRIVATE ZIRCON_PERFORMANCE_CORE=1)
+    target_compile_options(zircon-spike-vector-unit PRIVATE -Wall -Wextra -Werror -UNDEBUG)
+    target_include_directories(zircon-spike-vector-unit PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include")
+    target_link_libraries(zircon-spike-vector-unit PRIVATE PkgConfig::SPIKE)
+    set_target_properties(zircon-spike-vector-unit PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    )
+    add_test(NAME zircon-spike-vector-unit COMMAND zircon-spike-vector-unit)
+    set_tests_properties(zircon-spike-vector-unit PROPERTIES TIMEOUT 30)
+endif()
 
 set(ZIRCON_RV_SOFTWARE_DIR "${PROJECT_SOURCE_DIR}/RV-Software" CACHE PATH
     "Path to the Zircon RV-Software checkout"
