@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <sstream>
 #include <stdexcept>
+#include <type_traits>
 
 #include <riscv/cfg.h>
 #include <riscv/encoding.h>
@@ -23,6 +24,32 @@
 
 namespace zircon::sim {
 namespace {
+
+#ifdef ZIRCON_PERFORMANCE_CORE
+constexpr const char *kReferenceIsa = "RV32IMF_Zicsr_Zicntr_Zve32f_Zvl256b";
+constexpr const char *kReferencePrivilege = "M";
+#else
+constexpr const char *kReferenceIsa = "RV32IMAF_Zicsr_Zifencei_Zaamo_Zalrsc_Zicntr_Zihpm";
+constexpr const char *kReferencePrivilege = "MSU";
+#endif
+
+template <typename Processor = processor_t>
+std::unique_ptr<Processor> makeProcessor(const isa_parser_t *isa, const cfg_t *configuration, simif_t *simulation,
+                                         FILE *log, std::ostream &output) {
+    if constexpr (std::is_constructible_v<Processor, const char *, const char *, const cfg_t *, simif_t *, uint32_t,
+                                          bool, FILE *, std::ostream &>) {
+        return std::make_unique<Processor>(kReferenceIsa, kReferencePrivilege, configuration, simulation, 0, false, log,
+                                           output);
+    } else {
+        return std::make_unique<Processor>(isa, configuration, simulation, 0, false, log, output);
+    }
+}
+
+template <typename Processor> void configureSystemMmu(Processor &processor) {
+    if constexpr (requires { processor.set_max_vaddr_bits(32); }) {
+        processor.set_max_vaddr_bits(32);
+    }
+}
 
 uint64_t parseUnsigned(const std::string &text, int base, const char *field) {
     uint64_t value = 0;
@@ -148,13 +175,7 @@ std::optional<SpikeCommit> parseSpikeCommitLine(const std::string &line) {
 class SpikeReference::Impl : public simif_t {
   public:
     Impl(const SparseMemory &memory, uint32_t entry, bool linuxPlatform, std::string uartInput)
-        : memory_(memory), isa_(
-#ifdef ZIRCON_PERFORMANCE_CORE
-              "RV32IMF_Zicsr_Zicntr_Zve32f_Zvl256b", "M"
-#else
-              "RV32IMAF_Zicsr_Zifencei_Zaamo_Zalrsc_Zicntr_Zihpm", "MSU"
-#endif
-          ) {
+        : memory_(memory), isa_(kReferenceIsa, kReferencePrivilege) {
         if (linuxPlatform) {
             platform_ = std::make_unique<PlatformDevices>(false, std::move(uartInput));
         }
@@ -164,7 +185,7 @@ class SpikeReference::Impl : public simif_t {
         if (log_ == nullptr) {
             throw std::runtime_error("failed to open the Spike commit-log sink");
         }
-        processor_ = std::make_unique<processor_t>(&isa_, &cfg_, this, 0, false, log_.get(), output_);
+        processor_ = makeProcessor(&isa_, &cfg_, this, log_.get(), output_);
 #ifdef ZIRCON_PERFORMANCE_CORE
         // Spike's execution environment enables FP/vector state once; the DUT
         // has no privilege state or privileged startup instructions.
@@ -177,6 +198,7 @@ class SpikeReference::Impl : public simif_t {
         harts_.emplace(0, processor_.get());
         auto &csrMap = processor_->get_state()->csrmap;
 #ifndef ZIRCON_PERFORMANCE_CORE
+        configureSystemMmu(*processor_);
         const auto menvcfgh = csrMap.find(CSR_MENVCFGH);
         if (menvcfgh == csrMap.end()) {
             throw std::runtime_error("Spike does not expose menvcfgh.ADUE");
@@ -404,9 +426,9 @@ class SpikeReference::Impl : public simif_t {
     SpikeVectorState vectorState() const {
         const auto &vu = processor_->VU;
         const auto *state = processor_->get_state();
-        return {static_cast<uint32_t>(vu.vl->read()), static_cast<uint32_t>(vu.vtype->read()),
-            static_cast<uint32_t>(vu.vstart->read()), static_cast<uint8_t>(vu.vxrm->read()),
-            vu.vxsat->read() != 0, static_cast<uint8_t>(state->fflags->read())};
+        return {static_cast<uint32_t>(vu.vl->read()),     static_cast<uint32_t>(vu.vtype->read()),
+                static_cast<uint32_t>(vu.vstart->read()), static_cast<uint8_t>(vu.vxrm->read()),
+                state->csrmap.at(CSR_VXSAT)->read() != 0, static_cast<uint8_t>(state->fflags->read())};
     }
 
     uint8_t memoryByte(uint32_t address) const { return memory_.read8(address); }
@@ -508,7 +530,9 @@ class SpikeReference::Impl : public simif_t {
             if (found == state->csrmap.end()) {
                 throw std::runtime_error("checkpoint contains a Spike CSR absent from this build");
             }
-            if (address == CSR_MSTATUS) {
+            if (address == CSR_MSTATUS || address == CSR_MCYCLE || address == CSR_MCYCLEH || address == CSR_MINSTRET ||
+                address == CSR_MINSTRETH || address == CSR_CYCLE || address == CSR_CYCLEH || address == CSR_INSTRET ||
+                address == CSR_INSTRETH) {
                 continue;
             }
             const bool floatingCsr = address == CSR_FFLAGS || address == CSR_FRM || address == CSR_FCSR;
@@ -517,6 +541,23 @@ class SpikeReference::Impl : public simif_t {
             }
             found->second->write(value);
         }
+        // Restore each 64-bit counter once, rather than writing its RV32 halves
+        // and user aliases as separate architectural CSR instructions.
+        const auto restoreCounter = [&](const auto &counter, reg_t lowAddress, reg_t highAddress) {
+            const auto low =
+                std::find_if(csrs.begin(), csrs.end(), [=](const auto &csr) { return csr.first == lowAddress; });
+            const auto high =
+                std::find_if(csrs.begin(), csrs.end(), [=](const auto &csr) { return csr.first == highAddress; });
+            if (low == csrs.end() || high == csrs.end()) {
+                throw std::runtime_error("checkpoint does not contain both Spike counter halves");
+            }
+            counter->bump(0);
+            counter->write((high->second << 32) | (low->second & 0xffffffffu));
+            // Complete Spike's CSR-write accounting without retiring an instruction.
+            counter->bump(1);
+        };
+        restoreCounter(state->mcycle, CSR_MCYCLE, CSR_MCYCLEH);
+        restoreCounter(state->minstret, CSR_MINSTRET, CSR_MINSTRETH);
         for (size_t index = 1; index < integers.size(); ++index) {
             state->XPR.write(index, integers[index]);
         }
@@ -528,7 +569,7 @@ class SpikeReference::Impl : public simif_t {
         processor_->VU.set_vl(0, 1, vector.vl, vector.vtype);
         processor_->VU.vstart->write_raw(vector.vstart);
         processor_->VU.vxrm->write_raw(vector.vxrm);
-        processor_->VU.vxsat->write(vector.vxsat);
+        state->csrmap.at(CSR_VXSAT)->write(vector.vxsat);
         processor_->VU.setvl_count = setvlCount;
         std::memcpy(processor_->VU.reg_file, vectorBytes.data(), vectorBytes.size());
 #endif

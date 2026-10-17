@@ -17,6 +17,34 @@ SystemVerilog，调用 Verilator 并链接进程内 Spike。终端运行时显�
 和仿真速度；程序结束后输出结果、差分状态和性能报告位置。重定向输出为单条 JSON 记录，
 `--json` 可在终端强制使用 JSON。
 
+## Spike 参考模型
+
+性能配置使用 `RV32IMF_Zicsr_Zicntr_Zve32f_Zvl256b`，向量长度为 256 bit，
+元素宽度上限为 32 bit。参考模型由 Spike 开发库提供，`ZIRCON_SPIKE_ROOT` 指定其安装前缀；
+省略时通过 `pkg-config` 查找 `riscv-riscv.pc`。
+
+以下命令从官方仓库的固定提交构建 Spike，并在独立目录构建 SIMD8 仿真器：
+
+```sh
+git clone https://github.com/riscv-software-src/riscv-isa-sim.git spike-src
+git -C spike-src checkout 5a760667bf0d0ab893173b9eeff9c109c8d7dd9a
+mkdir spike-build
+cd spike-build
+../spike-src/configure --prefix="$HOME/.local/opt/riscv-isa-sim" --without-boost \
+  CFLAGS=-O2 CXXFLAGS=-O2
+make -j8
+make install
+cd ..
+cmake -S path/to/Zircon-2026 -B build/performance \
+  -DZIRCON_CORE_PROFILE=performance \
+  -DZIRCON_SPIKE_ROOT="$HOME/.local/opt/riscv-isa-sim"
+cmake --build build/performance --target zircon-sim -j8
+```
+
+Spike 构建依赖 C++ 编译器、Make、设备树编译器 `dtc` 和 `pkg-config`。
+仿真器适配 Spike 的两种处理器构造接口，系统配置可使用原有开发库；
+性能配置使用上述支持 Zve32f 的版本。
+
 ## Linux 仿真
 
 Zircon-2026 主仓库提供软件镜像、PGO 构建、检查点和交互 UART 的统一入口：
