@@ -45,11 +45,13 @@ std::unique_ptr<Processor> makeProcessor(const isa_parser_t *isa, const cfg_t *c
     }
 }
 
+#ifndef ZIRCON_PERFORMANCE_CORE
 template <typename Processor> void configureSystemMmu(Processor &processor) {
     if constexpr (requires { processor.set_max_vaddr_bits(32); }) {
         processor.set_max_vaddr_bits(32);
     }
 }
+#endif
 
 uint64_t parseUnsigned(const std::string &text, int base, const char *field) {
     uint64_t value = 0;

@@ -42,7 +42,7 @@ cmake --build build/performance --target zircon-sim -j8
 ```
 
 Spike 构建依赖 C++ 编译器、Make、设备树编译器 `dtc` 和 `pkg-config`。
-仿真器适配 Spike 的两种处理器构造接口，系统配置可使用原有开发库；
+仿真器适配 Spike 的两种处理器构造接口，系统配置支持非向量开发库；
 性能配置使用上述支持 Zve32f 的版本。
 
 ## Linux 仿真
@@ -84,6 +84,8 @@ cmake --build build/performance --target coremark
 
 构建配置同时选择 RTL、256 bit AXI 模型和 Spike ISA。性能核心的向量退休差分比较目的
 寄存器组、`vl/vtype/vstart`、浮点异常与整数饱和标志以及 Store 地址、字节 mask 和数据。
+每条退休通道按其 SQ 身份选择 Store 载荷的起始行和布局；并发退休的 Store 可对应
+正在排空的主项或排队项，各通道独立比较有效字节。
 标准允许的 agnostic 元素采用 DUT 的全一值同步参考状态，undisturbed 元素仍逐元素校验。
 默认保留差分与动态进度；`time` 使用核心周期时基。
 `coremark` 构建目标按核心配置选择对应软件。Verilator 线程池使用已编译模型的线程数；

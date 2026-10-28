@@ -120,14 +120,32 @@ std::optional<std::string> compareVectorCommit(const VZirconCore &dut, unsigned 
     if (trace.count > 8 || trace.base + trace.count > 32) { return "vector destination group is invalid"; }
     const uint32_t opcode = commit.instruction & 0x7fu;
     if (opcode == 0x27u) {
-        const unsigned count = dut.io_debug_vector_store_count;
-        if (count == 0 || count > 8) { return "vector Store task count is invalid"; }
+        struct StoreTrace {
+            unsigned firstGroup, count, eew, fieldRegisterShift, lastField;
+            bool scattered;
+        };
+        const std::array<StoreTrace, 3> storeTraces{{
+            {dut.io_debug_vector_store_retire_0_firstGroup, dut.io_debug_vector_store_retire_0_count,
+             dut.io_debug_vector_store_retire_0_eew, dut.io_debug_vector_store_retire_0_fieldRegisterShift,
+             dut.io_debug_vector_store_retire_0_lastField, bool(dut.io_debug_vector_store_retire_0_scattered)},
+            {dut.io_debug_vector_store_retire_1_firstGroup, dut.io_debug_vector_store_retire_1_count,
+             dut.io_debug_vector_store_retire_1_eew, dut.io_debug_vector_store_retire_1_fieldRegisterShift,
+             dut.io_debug_vector_store_retire_1_lastField, bool(dut.io_debug_vector_store_retire_1_scattered)},
+            {dut.io_debug_vector_store_retire_2_firstGroup, dut.io_debug_vector_store_retire_2_count,
+             dut.io_debug_vector_store_retire_2_eew, dut.io_debug_vector_store_retire_2_fieldRegisterShift,
+             dut.io_debug_vector_store_retire_2_lastField, bool(dut.io_debug_vector_store_retire_2_scattered)},
+        }};
+        const auto &storeTrace = storeTraces.at(lane);
+        const unsigned count = storeTrace.count;
+        if (count == 0 || count > 8 || storeTrace.firstGroup + count > 8) {
+            return "vector Store task count is invalid";
+        }
         std::vector<std::pair<uint32_t, uint8_t>> stores;
-        const bool scattered = dut.io_debug_vector_store_scattered;
-        const unsigned eew = dut.io_debug_vector_store_eew;
+        const bool scattered = storeTrace.scattered;
+        const unsigned eew = storeTrace.eew;
         const unsigned elementBytes = 1u << eew;
-        const unsigned fieldRegisters = 1u << dut.io_debug_vector_store_fieldRegisterShift;
-        const unsigned fields = dut.io_debug_vector_store_lastField + 1u;
+        const unsigned fieldRegisters = 1u << storeTrace.fieldRegisterShift;
+        const unsigned fields = storeTrace.lastField + 1u;
         if (scattered && fields * fieldRegisters != count) { return "vector Store segment layout is invalid"; }
         const std::array<const uint32_t *, 8> elementAddresses{{
             dut.io_debug_vector_store_elementAddresses_0.data(), dut.io_debug_vector_store_elementAddresses_1.data(),
@@ -136,6 +154,7 @@ std::optional<std::string> compareVectorCommit(const VZirconCore &dut, unsigned 
             dut.io_debug_vector_store_elementAddresses_6.data(), dut.io_debug_vector_store_elementAddresses_7.data(),
         }};
         auto collect = [&](unsigned group, unsigned begin, unsigned end) {
+            group += storeTrace.firstGroup;
             const uint32_t address = dut.io_debug_vector_store_addresses[group];
             const uint32_t mask = dut.io_debug_vector_store_masks[group];
             for (unsigned byte = begin; byte < end; ++byte) {
@@ -177,8 +196,9 @@ std::optional<std::string> compareVectorCommit(const VZirconCore &dut, unsigned 
                   << " bytes reference=" << expected.size() << " bytes tasks=" << count
                   << " vl=" << vector.before.vl << " vtype=0x" << std::hex << vector.before.vtype;
             for (unsigned task = 0; task < count; ++task) {
-                error << " [" << task << ":addr=0x" << dut.io_debug_vector_store_addresses[task]
-                      << ",mask=0x" << dut.io_debug_vector_store_masks[task] << "]";
+                const unsigned row = storeTrace.firstGroup + task;
+                error << " [" << task << ":addr=0x" << dut.io_debug_vector_store_addresses[row]
+                      << ",mask=0x" << dut.io_debug_vector_store_masks[row] << "]";
             }
             const auto mismatch = std::mismatch(stores.begin(), stores.end(), expected.begin(), expected.end());
             if (mismatch.first != stores.end()) {
